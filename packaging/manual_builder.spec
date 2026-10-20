@@ -1,21 +1,48 @@
-# PyInstaller spec – build with:  uv run pyinstaller packaging/manual_builder.spec --noconfirm
-# Produces dist/Manual Builder.app (macOS) or dist/Manual Builder/Manual Builder.exe (Windows).
+# PyInstaller recipe. Use the release script instead of calling this directly:
+#     uv run python tools/build_release.py
+# Produces dist/Anleitungs-Baukasten.app (macOS) or dist/Anleitungs-Baukasten/Anleitungs-Baukasten.exe (Windows).
+import re
 import sys
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_data_files
 
-datas = collect_data_files("docx") + collect_data_files("docxcompose") + [
-    ("../src/manual_builder/gui/assets", "manual_builder/gui/assets")]
-hidden = ["win32com", "win32com.client", "pythoncom"] if sys.platform == "win32" else []
+ROOT = Path(SPECPATH).parent
+init = (ROOT / "src" / "manual_builder" / "__init__.py").read_text(encoding="utf-8")
+VERSION = re.search(r'__version__ = "([^"]+)"', init).group(1)
+APP_NAME = re.search(r'APP_NAME = "([^"]+)"', init).group(1)
+BUNDLE_ID = re.search(r'BUNDLE_ID = "([^"]+)"', init).group(1)
+ICON = ROOT / "packaging" / "icon"
 
-a = Analysis(["launch.py"], pathex=["../src"], datas=datas, hiddenimports=hidden,
-             excludes=["tkinter", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
-                       "PySide6.Qt3DCore", "PySide6.QtQuick", "PySide6.QtQml", "PySide6.QtMultimedia"])
+datas = collect_data_files("docx") + collect_data_files("docxcompose") + collect_data_files("certifi") + [
+    (str(ROOT / "src" / "manual_builder" / "gui" / "assets"), "manual_builder/gui/assets")]
+hidden = ["truststore"]
+if sys.platform == "win32":
+    hidden += ["win32com", "win32com.client", "pythoncom", "pywintypes"]
+
+a = Analysis([str(ROOT / "packaging" / "launch.py")], pathex=[str(ROOT / "src")], datas=datas,
+             hiddenimports=hidden,
+             excludes=["tkinter", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore",
+                       "PySide6.QtQuick", "PySide6.QtQml", "PySide6.QtMultimedia", "PySide6.QtCharts",
+                       "PySide6.QtDataVisualization", "PySide6.QtPdf", "PySide6.QtWebSockets"])
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Manual Builder",
-          console=False, upx=False, icon="app_icon.ico" if sys.platform == "win32" else "app_icon.icns")
-coll = COLLECT(exe, a.binaries, a.datas, name="Manual Builder", upx=False)
+version_file = str(ROOT / "build" / "version_info.txt") if sys.platform == "win32" else None
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name=APP_NAME, console=False, upx=False,
+          icon=str(ICON / ("app_icon.ico" if sys.platform == "win32" else "app_icon.icns")),
+          version=version_file)
+coll = COLLECT(exe, a.binaries, a.datas, name=APP_NAME, upx=False)
 if sys.platform == "darwin":
-    app = BUNDLE(coll, name="Manual Builder.app", icon="app_icon.icns", bundle_identifier="de.profilclip.manualbuilder",
-                 info_plist={"NSHighResolutionCapable": True,
-                             "NSAppleEventsUsageDescription":
-                                 "Manual Builder steuert Microsoft Word, um Inhaltsverzeichnis und PDF zu erzeugen."})
+    app = BUNDLE(coll, name=f"{APP_NAME}.app", icon=str(ICON / "app_icon.icns"), bundle_identifier=BUNDLE_ID,
+                 version=VERSION,
+                 info_plist={
+                     "CFBundleDisplayName": APP_NAME,
+                     "CFBundleName": APP_NAME,
+                     "CFBundleShortVersionString": VERSION,
+                     "CFBundleVersion": VERSION,
+                     "LSMinimumSystemVersion": "11.0",
+                     "NSHighResolutionCapable": True,
+                     "NSRequiresAquaSystemAppearance": True,     # app has its own light theme
+                     "NSHumanReadableCopyright": "© Profi L-Clip GmbH – interne Software",
+                     "NSAppleEventsUsageDescription":
+                         "Der Anleitungs-Baukasten steuert Microsoft Word, um Inhaltsverzeichnis und PDF zu erzeugen.",
+                 })

@@ -15,3 +15,9 @@ library/
 # OS / Office
 .DS_Store
 ~$*
+
+# never commit manuals or generated documents (the repo may become public)
+*.docx
+*.doc
+*.pdf
+release/

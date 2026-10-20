@@ -129,6 +129,12 @@ QSplitter::handle {{ background: transparent; }}
 QSplitter::handle:hover {{ background: #cfe0f3; border-radius: 3px; }}
 QSplitter#mainSplit::handle {{ background: {BORDER}; }}
 QSplitter#mainSplit::handle:hover {{ background: {ACCENT}; }}
+#updateBanner {{ background: {ACCENT}; }}
+#bannerText {{ color: #ffffff; }}
+QPushButton#bannerPrimary {{ background: #ffffff; color: {ACCENT}; border: none; font-weight: 650; padding: 6px 14px; }}
+QPushButton#bannerPrimary:hover {{ background: #e5eff9; }}
+QPushButton#bannerLink {{ background: transparent; border: none; color: #dbe9f7; padding: 6px 8px; }}
+QPushButton#bannerLink:hover {{ color: #ffffff; text-decoration: underline; }}
 QToolTip {{ background: #212121; color: #ffffff; border: none; padding: 6px 8px; border-radius: 6px; }}
 QMenu {{ background: #fff; border: 1px solid {BORDER}; border-radius: 8px; padding: 4px; }}
 QMenu::item {{ padding: 6px 18px; border-radius: 5px; }}

@@ -24,7 +24,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QPoint, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox,
-                               QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
+                               QCheckBox, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
                                QSplitter,
@@ -38,6 +38,8 @@ from .common import open_path
 from .flow import FlowLayout
 from .icons import icon, pixmap, slot_style
 from .import_dialog import ImportDialog
+from .update_ui import UpdateBanner, UpdateManager, describe
+from .. import __version__, updater
 from .module_dialog import ModuleDialog
 from .style import ACCENT, ASSETS, ERROR, MUTED, OK, WARN
 
@@ -372,7 +374,12 @@ class MachinesPanel(QFrame):
         lay.addWidget(LogoLabel())
         app_row = QHBoxLayout()
         app_row.setContentsMargins(4, 2, 0, 0)
-        app_row.addWidget(icon_label("layers", ACCENT, 16))
+        app_icon = QLabel()
+        app_icon.setPixmap(QPixmap(str(ASSETS / "app_icon.png")).scaled(
+            40, 40, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        app_icon.setFixedSize(20, 20)
+        app_icon.setScaledContents(True)
+        app_row.addWidget(app_icon)
         app_row.addWidget(ElidedLabel("Anleitungs-Baukasten", "appName"), 1)
         lay.addLayout(app_row)
         lay.addSpacing(14)
@@ -1322,7 +1329,7 @@ class SettingsDialog(QDialog):
         super().__init__(win)
         self.win = win
         self.setWindowTitle("Einstellungen")
-        self.setMinimumWidth(640)
+        self.setMinimumWidth(700)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -1347,10 +1354,43 @@ class SettingsDialog(QDialog):
         for e in ["auto"] + available_engines():
             self.engine.addItem(ENGINE_NAMES[e], e)
         self.engine.setCurrentIndex(max(0, self.engine.findData(win.settings.value("engine", "auto"))))
-        form.addRow("Seitenzahlen & PDF mit:", self.engine)
+        form.addRow("Seitenzahlen && PDF mit:", self.engine)
         form.addRow("", label("Inhaltsverzeichnis, Seitenzahlen und PDF erzeugt Microsoft Word oder LibreOffice. "
                               "„Automatisch“ nimmt Word, falls vorhanden.", "hint", wrap=True))
         lay.addLayout(form)
+
+        # updates
+        upd = QFrame()
+        upd.setObjectName("subCard")
+        ul = QVBoxLayout(upd)
+        ul.setContentsMargins(16, 14, 16, 14)
+        ul.setSpacing(8)
+        row = QHBoxLayout()
+        row.addWidget(label("Updates", "sectionTitle"))
+        row.addSpacing(12)
+        row.addWidget(label(f"installiert: <b>{__version__}</b>"))
+        row.addStretch()
+        self.check_btn = text_button("Jetzt nach Updates suchen", "upload", None, self._check_now)
+        row.addWidget(self.check_btn)
+        ul.addLayout(row)
+        self.update_result = label("", None, wrap=True)
+        self.update_result.setTextFormat(Qt.TextFormat.RichText)
+        self.update_result.hide()
+        ul.addWidget(self.update_result)
+        self.auto_check = QCheckBox("Beim Start automatisch nach Updates suchen")
+        self.auto_check.setChecked(str(win.settings.value("auto_update_check", "true")) == "true")
+        ul.addWidget(self.auto_check)
+        ul.addSpacing(4)
+        ul.addWidget(label("Update-Quelle (nur ändern, wenn nötig):", "fieldLabel"))
+        self.feed_edit = QLineEdit(win.settings.value("update_feed", "") or "")
+        self.feed_edit.setPlaceholderText("Standard: Bibliothek/updates, danach GitHub")
+        ul.addWidget(self.feed_edit)
+        ul.addWidget(label("Ein Ordner (z. B. auf dem Netzlaufwerk) oder eine Web-Adresse, unter der "
+                           "latest.json liegt.", "hint", wrap=True))
+        ok, reason = updater.can_self_update()
+        if not ok:
+            ul.addWidget(label(reason, "hint", wrap=True))
+        lay.addWidget(upd)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self._ok)
         bb.rejected.connect(self.reject)
@@ -1372,8 +1412,26 @@ class SettingsDialog(QDialog):
         if d:
             self.out_edit.setText(d)
 
+    def _check_now(self) -> None:
+        s = self.win.settings
+        s.setValue("update_feed", self.feed_edit.text().strip())
+        s.remove("skipped_version")
+        self.check_btn.setEnabled(False)
+        self.update_result.show()
+        self.update_result.setText("Suche …")
+        mgr = self.win.updates
+
+        def done(res):
+            mgr.checked.disconnect(done)
+            self.check_btn.setEnabled(True)
+            self.update_result.setText(describe(res))
+        mgr.checked.connect(done)
+        mgr.check(silent=False)
+
     def _ok(self) -> None:
         s = self.win.settings
+        s.setValue("update_feed", self.feed_edit.text().strip())
+        s.setValue("auto_update_check", "true" if self.auto_check.isChecked() else "false")
         s.setValue("output_dir", self.out_edit.text())
         s.setValue("engine", self.engine.currentData())
         if self.new_lib is not None:
@@ -1397,9 +1455,15 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(980, 640)
         root = QWidget()
         root.setObjectName("page")
-        rl = QHBoxLayout(root)
+        outer = QVBoxLayout(root)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self.update_banner = UpdateBanner(self)
+        outer.addWidget(self.update_banner)
+        rl = QHBoxLayout()
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(0)
+        outer.addLayout(rl, 1)
         self.workspace = Workspace(self)
         self.machines = MachinesPanel(self)
         self.machines.selected.connect(self.open_machine)
@@ -1420,6 +1484,10 @@ class MainWindow(QMainWindow):
                 sp.restoreState(state)
             sp.splitterMoved.connect(lambda *_, k=key, sp=sp: self.settings.setValue(k, sp.saveState()))
         self._open_initial()
+        self.updates = UpdateManager(self)
+        self.updates.available.connect(self.update_banner.show_release)
+        if updater.is_frozen():          # the development version is updated with git
+            self.updates.start()
 
     def _open_initial(self) -> None:
         last = self.settings.value("last_machine", "")

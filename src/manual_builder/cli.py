@@ -77,10 +77,91 @@ def cmd_template(args) -> int:
     return 0
 
 
+def cmd_self_test(args) -> int:
+    """Checks that a packaged app is complete (used by the release pipeline)."""
+    import json
+    import tempfile
+    import traceback
+
+    from . import __version__
+    result = {"version": __version__, "ok": False, "checks": {}}
+    try:
+        from .gui import style
+        for name in ("Manrope.ttf", "logo.png", "app_icon.png", "clip.png"):
+            result["checks"][name] = (style.ASSETS / name).exists()
+        import docx  # noqa: F401
+        import docxcompose  # noqa: F401
+        from docx import Document
+        from PySide6 import QtSvg  # noqa: F401
+        from PySide6.QtWidgets import QApplication  # noqa: F401
+        from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
+        tr = QTranslator()
+        result["checks"]["translations_de"] = tr.load(
+            QLocale(QLocale.Language.German), "qtbase", "_",
+            QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath))
+        from .updater import _ssl_context, platform_key
+        _ssl_context()
+        result["checks"]["platform"] = platform_key()
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Document()
+            d.add_paragraph("9.5 Clipper", style="Heading 2")
+            d.save(Path(tmp) / "t.docx")
+            from .normalize import normalize_file
+            rep = normalize_file(Path(tmp) / "t.docx", kind="component", title="Clipper")
+            result["checks"]["normalize"] = [h.text for h in rep.headings] == ["Clipper"]
+        result["ok"] = all(v for v in result["checks"].values())
+    except Exception:
+        result["error"] = traceback.format_exc()
+    text = json.dumps(result, indent=2, ensure_ascii=False)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+    print(text)
+    return 0 if result["ok"] else 1
+
+
+def cmd_update(args) -> int:
+    from . import __version__
+    from . import updater
+    lib = None
+    try:
+        lib = Library(Path(args.library))
+    except Exception:
+        pass
+    feeds = [args.feed] if args.feed else updater.feed_candidates("", lib)
+    res = updater.check(feeds)
+    print(f"installiert: {__version__}  ·  neueste: {res.latest or '–'}  ·  Quelle: {res.source or '–'}")
+    for e in res.errors:
+        print("  übersprungen:", e)
+    if not res.release:
+        print("Kein Update für diesen Rechner.")
+        return 0
+    print(f"Update verfügbar: {res.release.version} ({res.release.filename})")
+    if args.action != "apply":
+        return 0
+    import tempfile
+    pkg = updater.download(res.release, Path(tempfile.mkdtemp(prefix="baukasten-dl-")),
+                           progress=lambda d, t: None)
+    updater.install(pkg, relaunch=not args.no_relaunch)
+    print("Installation gestartet – die App wird ersetzt, sobald dieser Prozess endet.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="manual-builder", description="Betriebsanleitungen aus Modulen bauen")
+    from . import __version__
+    argv = list(sys.argv[1:] if argv is None else argv)
+    argv = [a for a in argv if not a.startswith("-psn_")]     # macOS Finder process id
+    ap = argparse.ArgumentParser(prog="anleitungs-baukasten", description="Betriebsanleitungen aus Bausteinen bauen")
+    ap.add_argument("--version", action="version", version=__version__)
     ap.add_argument("--library", "-l", default="library", help="Pfad zur Bibliothek")
     sub = ap.add_subparsers(dest="cmd")
+
+    st = sub.add_parser("self-test", help="Prüfen, ob die installierte App vollständig ist")
+    st.add_argument("--out", help="Ergebnis zusätzlich in diese Datei schreiben")
+
+    up = sub.add_parser("update", help="Nach Updates suchen / Update installieren")
+    up.add_argument("action", choices=["check", "apply"], nargs="?", default="check")
+    up.add_argument("--feed", help="Update-Quelle (Ordner oder URL) statt der Standardquellen")
+    up.add_argument("--no-relaunch", action="store_true")
 
     sub.add_parser("gui", help="Programmoberfläche starten (Standard)")
 
@@ -113,9 +194,13 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("source")
     t.add_argument("out")
 
+    if not argv:      # double-click: start the program
+        from .gui.app import run
+        return run(None)
     args = ap.parse_args(argv)
     if args.cmd in (None, "gui"):
         from .gui.app import run
-        return run(Path(args.library) if args.cmd else None)
+        return run(Path(args.library) if "--library" in argv or "-l" in argv else None)
     return {"build": cmd_build, "check": cmd_check, "import": cmd_import, "seed": cmd_seed,
+            "self-test": cmd_self_test, "update": cmd_update,
             "template": cmd_template}[args.cmd](args)

@@ -83,12 +83,14 @@ Code map: `normalize.py` (cleanup), `build.py` (assembly), `engines.py` (Word/Li
 uv run python tools/render_reference.py ../Bedienungsanleitungen ~/ProfilClip/Referenz
 ```
 
-## Packaging
+## Releases & updates
+
+Push a version tag; GitHub Actions builds, tests and publishes the Windows installer and the Mac apps.
+Installed apps update themselves. See **[docs/Updates.md](docs/Updates.md)** (German).
 
 ```bash
-cd packaging && uv run pyinstaller manual_builder.spec --noconfirm --distpath ../dist --workpath ../build
+uv run python tools/build_release.py                  # package for this computer (with self-test)
+uv run python tools/publish_update.py --github v0.3.0 --to "<Bibliothek>/updates"
 ```
 
-PyInstaller can't cross-compile, so the Windows `.exe` is built by GitHub Actions: run the
-**Build** workflow manually (Actions → Build → Run workflow) or push a tag `v*`. The zipped app
-is attached to the run as an artifact. The macOS app is unsigned: on first start, right-click → Open.
+Icons: edit `packaging/icon/app_icon.svg`, then `uv run python tools/make_icons.py`.

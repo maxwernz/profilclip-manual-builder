@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#1c7fd6"/>
+      <stop offset="1" stop-color="#014d8e"/>
+    </linearGradient>
+    <linearGradient id="clip" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffbe80"/>
+      <stop offset="1" stop-color="#e0702c"/>
+    </linearGradient>
+  </defs>
+  <!-- app tile -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <!-- page with soft shadow -->
+  <rect x="330" y="232" width="448" height="596" rx="44" fill="#00284d" opacity="0.18"/>
+  <path d="M352 210 H662 L756 304 V778 a36 36 0 0 1 -36 36 H352 a36 36 0 0 1 -36 -36 V246 a36 36 0 0 1 36 -36 Z" fill="#ffffff"/>
+  <path d="M662 210 V268 a36 36 0 0 0 36 36 H756 Z" fill="#cfe0f3"/>
+  <!-- building blocks = chapters -->
+  <rect x="384" y="398" width="86" height="86" rx="20" fill="#0160b2"/>
+  <rect x="384" y="512" width="86" height="86" rx="20" fill="#319fc0"/>
+  <rect x="384" y="626" width="86" height="86" rx="20" fill="#e07b39"/>
+  <rect x="500" y="420" width="196" height="20" rx="10" fill="#9fbfe0"/>
+  <rect x="500" y="456" width="140" height="20" rx="10" fill="#cfe0f3"/>
+  <rect x="500" y="534" width="196" height="20" rx="10" fill="#9fbfe0"/>
+  <rect x="500" y="570" width="160" height="20" rx="10" fill="#cfe0f3"/>
+  <rect x="500" y="648" width="196" height="20" rx="10" fill="#9fbfe0"/>
+  <rect x="500" y="684" width="120" height="20" rx="10" fill="#cfe0f3"/>
+  <!-- clip holding the page at its top-left edge -->
+  <path d="M462 170 H352 a70 70 0 0 0 -70 70 V280 a70 70 0 0 0 70 70 H462" fill="none" stroke="#00284d" stroke-opacity="0.18" stroke-width="50" stroke-linecap="round" transform="translate(6 10)"/>
+  <path d="M462 170 H352 a70 70 0 0 0 -70 70 V280 a70 70 0 0 0 70 70 H462" fill="none" stroke="url(#clip)" stroke-width="50" stroke-linecap="round"/>
+</svg>
