@@ -7,6 +7,10 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+
 jobs:
   build:
     strategy:

@@ -104,3 +104,56 @@ def test_drag_and_drop_flow(app, tmp_path):
     ws.save()
     assert Machine.load(ws.machine.path).modules == start
     win.close()
+
+
+def test_update_dialog_flow(app, tmp_path, monkeypatch):
+    """Banner → dialog → download + checksum → install() is called → app quits."""
+    import hashlib
+    import json
+    from PySide6.QtWidgets import QApplication
+    from manual_builder import updater
+    from manual_builder.gui import update_ui
+    from manual_builder.gui.main_window import MainWindow
+    from manual_builder.library import Library
+
+    feed = tmp_path / "feed"
+    feed.mkdir()
+    payload = b"neue Version"
+    (feed / "pkg.zip").write_bytes(payload)
+    (feed / "latest.json").write_text(json.dumps({"version": "99.0.0", "notes": "- Test", "assets": {
+        updater.platform_key(): {"file": "pkg.zip", "sha256": hashlib.sha256(payload).hexdigest(),
+                                 "size": len(payload)}}}), encoding="utf-8")
+    installed, quit_called = [], []
+    monkeypatch.setattr(updater, "can_self_update", lambda: (True, ""))
+    monkeypatch.setattr(updater, "install", lambda path, relaunch=True: installed.append(path))
+    monkeypatch.setattr(QApplication, "quit", lambda *a: quit_called.append(True))
+
+    lib_dir = tmp_path / "lib"
+    shutil.copytree(LIB, lib_dir, ignore=shutil.ignore_patterns("archive", "updates"))
+    win = MainWindow(Library(lib_dir))
+    win.settings.setValue("update_feed", str(feed))
+    win.settings.remove("skipped_version")
+    win.show()
+    win.updates.check()
+    for _ in range(200):
+        app.processEvents()
+        if win.update_banner.isVisible():
+            break
+        import time
+        time.sleep(0.02)
+    assert win.update_banner.isVisible() and win.update_banner.release.version == "99.0.0"
+
+    dlg = update_ui.UpdateDialog(win, win.update_banner.release)
+    dlg.show()
+    dlg.go_btn.click()
+    for _ in range(300):
+        app.processEvents()
+        if installed and quit_called:
+            break
+        import time
+        time.sleep(0.02)
+    assert installed and installed[0].read_bytes() == payload
+    assert quit_called
+    win.settings.remove("update_feed")
+    dlg.close()
+    win.close()

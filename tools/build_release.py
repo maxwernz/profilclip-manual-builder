@@ -21,6 +21,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+for _stream in (sys.stdout, sys.stderr):   # Windows consoles are not UTF-8 by default
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, str(ROOT / "src"))
 from manual_builder import APP_NAME, __version__  # noqa: E402
 from manual_builder.updater import platform_key  # noqa: E402
