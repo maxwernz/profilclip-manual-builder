@@ -4,13 +4,15 @@ Desktop app (macOS + Windows) that assembles Profil-Clip operating manuals from 
 ("Bausteine"). You pick the parts of a machine; the app merges the matching `.docx` files into one
 manual, numbers all chapters, builds the table of contents and the page numbers, and exports DOCX + PDF.
 
-The app has two pages:
+Everything happens in one window:
 
-- **Anleitungen**: one card per machine. Opening a machine shows (1) machine data, (2) equipment,
-  with one choice per component, and (3) a live preview of the table of contents, plus a single
-  "PDF erstellen" button. Changes are saved automatically.
-- **Bausteine**: the Word modules with their maintenance/spare-part/fault tables, for whoever maintains
-  the texts. "Word-Datei hinzufügen" checks and adds new or updated files.
+- **Maschinen** (left): all machine configurations; click to switch, `+` to add, `⋯` to rename/duplicate/delete.
+- **Bibliothek** (middle): the building blocks as tiles, grouped by component (Dosierung, Folie, Clipper …),
+  each group with its own icon and color. A green check marks tiles that are already in the manual.
+- **Anleitung** (right): the manual as chapter tiles with live chapter numbers. Drag tiles in from the
+  library, drag to reorder, drag back to the library (or `×`) to remove. Only one variant per component
+  (e.g. one clipper): dropping another one replaces it. `Ctrl+Z` undoes. Changes save automatically.
+- Header: machine name, language (DE/EN/IT) and **PDF erstellen**.
 
 Each module is self-contained: its text (Word) **plus** structured tables for maintenance, wear/spare
 parts and fault codes. These tables are printed in the module's own chapter, and also combined into a
