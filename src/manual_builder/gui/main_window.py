@@ -20,10 +20,10 @@ import datetime as _dt
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QMimeData, QObject, QPoint, QSettings, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QDrag, QKeySequence
+from PySide6.QtCore import QObject, QPoint, QSettings, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox,
-                               QFileDialog, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
+                               QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
                                QToolButton, QVBoxLayout, QWidget)
@@ -39,8 +39,6 @@ from .import_dialog import ImportDialog
 from .module_dialog import ModuleDialog
 from .style import ACCENT, ERROR, MUTED, OK, WARN
 
-MODULE_MIME = "application/x-manual-builder-module"
-CHAPTER_MIME = "application/x-manual-builder-chapter"
 LANG_LABELS = {"de": "Deutsch", "en": "English", "it": "Italiano", "fr": "Français", "es": "Español"}
 MAIN_VARIABLES = [("Maschinentyp", "Maschinentyp"), ("Kunde", "Kunde"),
                   ("Seriennummer", "Seriennummer"), ("Baujahr", "Baujahr")]
@@ -123,15 +121,125 @@ def fmt_date(iso: str) -> str:
         return iso
 
 
-def start_drag(source: QWidget, mime_type: str, payload: str) -> None:
-    mime = QMimeData()
-    mime.setData(mime_type, payload.encode())
-    drag = QDrag(source)
-    drag.setMimeData(mime)
-    pm = source.grab()
-    drag.setPixmap(pm)
-    drag.setHotSpot(QPoint(min(pm.width() // 2, 40), pm.height() // 2))
-    drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction)
+class DragController:
+    """Drag & drop inside the app (no OS drag session): a translucent copy of the tile
+    follows the mouse, the manual shows where it will land, release drops it."""
+
+    MODULE, CHAPTER = "module", "chapter"
+
+    def __init__(self, ws: "Workspace"):
+        self.ws = ws
+        self.kind: str | None = None
+        self.payload = ""
+        self.ghost: QLabel | None = None
+        self.hot = QPoint()
+
+    @property
+    def active(self) -> bool:
+        return self.kind is not None
+
+    def begin(self, source: QWidget, kind: str, payload: str, gpos: QPoint) -> None:
+        host = self.ws.window().centralWidget()
+        pm = source.grab()
+        ghost = QLabel(host)
+        ghost.setPixmap(pm)
+        ghost.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        effect = QGraphicsOpacityEffect(ghost)
+        effect.setOpacity(0.92)
+        ghost.setGraphicsEffect(effect)
+        ghost.adjustSize()
+        self.hot = QPoint(min(40, ghost.width() // 2), ghost.height() // 2)
+        self.ghost, self.kind, self.payload = ghost, kind, payload
+        QApplication.setOverrideCursor(Qt.CursorShape.ClosedHandCursor)
+        ghost.show()
+        self.move(gpos)
+
+    def _target(self, gpos: QPoint) -> str | None:
+        manual, library = self.ws.manual, self.ws.library
+        if manual.rect().contains(manual.mapFromGlobal(gpos)):
+            return "manual"
+        if self.kind == self.CHAPTER and library.rect().contains(library.mapFromGlobal(gpos)):
+            return "library"
+        return None
+
+    def move(self, gpos: QPoint) -> None:
+        if not self.active:
+            return
+        host = self.ghost.parentWidget()
+        self.ghost.move(host.mapFromGlobal(gpos) - self.hot)
+        self.ghost.raise_()
+        target = self._target(gpos)
+        chapters = self.ws.manual.chapters
+        if target == "manual":
+            chapters.show_indicator(chapters.index_at(chapters.mapFromGlobal(gpos).y()))
+            self._autoscroll(gpos)
+        else:
+            chapters.hide_indicator()
+        self.ws.library.set_drop_highlight(target == "library")
+
+    def _autoscroll(self, gpos: QPoint) -> None:
+        sc = self.ws.manual.chapter_scroll
+        y = sc.viewport().mapFromGlobal(gpos).y()
+        bar = sc.verticalScrollBar()
+        if y < 40:
+            bar.setValue(bar.value() - 12)
+        elif y > sc.viewport().height() - 40:
+            bar.setValue(bar.value() + 12)
+
+    def end(self, gpos: QPoint | None) -> None:
+        if not self.active:
+            return
+        kind, payload = self.kind, self.payload
+        target = self._target(gpos) if gpos is not None else None
+        chapters = self.ws.manual.chapters
+        idx = chapters.index_at(chapters.mapFromGlobal(gpos).y()) if target == "manual" else -1
+        chapters.hide_indicator()
+        self.ws.library.set_drop_highlight(False)
+        self.ghost.deleteLater()
+        self.ghost, self.kind, self.payload = None, None, ""
+        QApplication.restoreOverrideCursor()
+        if target is None:
+            return
+        # run after the mouse event has finished (the source tile gets rebuilt)
+        if target == "manual" and kind == self.MODULE:
+            QTimer.singleShot(0, lambda: self.ws.add_module(payload, idx))
+        elif target == "manual" and kind == self.CHAPTER:
+            QTimer.singleShot(0, lambda: self.ws.move_index(int(payload), idx))
+        elif target == "library":
+            QTimer.singleShot(0, lambda: self.ws.remove_index(int(payload)))
+
+
+class DraggableTile(QFrame):
+    """Base for tiles that can be dragged with the in-app DragController."""
+    drag_kind = DragController.MODULE
+
+    def drag_payload(self) -> str:  # pragma: no cover - overridden
+        return ""
+
+    def _init_drag(self, ws: "Workspace") -> None:
+        self.ws = ws
+        self._press: QPoint | None = None
+        self._dragging = False
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._press = e.position().toPoint()
+            self._dragging = False
+
+    def mouseMoveEvent(self, e):
+        gpos = e.globalPosition().toPoint()
+        if self._dragging:
+            self.ws.drag.move(gpos)
+        elif self._press is not None and (e.position().toPoint() - self._press).manhattanLength() \
+                >= QApplication.startDragDistance():
+            self._dragging = True
+            self.ws.drag.begin(self, self.drag_kind, self.drag_payload(), gpos)
+
+    def mouseReleaseEvent(self, e):
+        if self._dragging:
+            self.ws.drag.end(e.globalPosition().toPoint())
+        self._press = None
+        self._dragging = False
 
 
 # ---------------------------------------------------------------- machines (left)
@@ -299,12 +407,13 @@ class MachinesPanel(QFrame):
 
 # ---------------------------------------------------------------- library (middle)
 
-class LibraryTile(QFrame):
+class LibraryTile(DraggableTile):
+    drag_kind = DragController.MODULE
+
     def __init__(self, ws: "Workspace", module: Module, used: bool):
         super().__init__()
-        self.ws = ws
+        self._init_drag(ws)
         self.module = module
-        self._press: QPoint | None = None
         self.setObjectName("tile")
         self.setProperty("used", used)
         self.setFixedSize(172, 112)
@@ -358,18 +467,8 @@ class LibraryTile(QFrame):
         tip.append("Ziehen oder doppelklicken zum Hinzufügen")
         self.setToolTip("\n".join(tip))
 
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self._press = e.position().toPoint()
-
-    def mouseMoveEvent(self, e):
-        if self._press is not None and (e.position().toPoint() - self._press).manhattanLength() \
-                >= QApplication.startDragDistance():
-            self._press = None
-            start_drag(self, MODULE_MIME, self.module.id)
-
-    def mouseReleaseEvent(self, e):
-        self._press = None
+    def drag_payload(self) -> str:
+        return self.module.id
 
     def mouseDoubleClickEvent(self, e):
         self.ws.add_module(self.module.id)
@@ -383,7 +482,6 @@ class LibraryPanel(QFrame):
         super().__init__()
         self.ws = ws
         self.setObjectName("panel")
-        self.setAcceptDrops(True)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(18, 14, 10, 12)
         lay.setSpacing(10)
@@ -474,34 +572,23 @@ class LibraryPanel(QFrame):
         if dlg.exec():
             self.ws.reload_library()
 
-    # dropping a chapter back on the library removes it
-    def dragEnterEvent(self, e):
-        if e.mimeData().hasFormat(CHAPTER_MIME):
-            e.acceptProposedAction()
-            self.setProperty("dropTarget", True)
+    def set_drop_highlight(self, on: bool) -> None:
+        """Shown while a chapter tile is dragged over the library: dropping removes it."""
+        if bool(self.property("dropTarget")) != on:
+            self.setProperty("dropTarget", on)
             repolish(self)
-
-    def dragLeaveEvent(self, e):
-        self.setProperty("dropTarget", False)
-        repolish(self)
-
-    def dropEvent(self, e):
-        self.setProperty("dropTarget", False)
-        repolish(self)
-        idx = int(bytes(e.mimeData().data(CHAPTER_MIME)).decode())
-        self.ws.remove_index(idx)
-        e.acceptProposedAction()
 
 
 # ---------------------------------------------------------------- manual (right)
 
-class ChapterTile(QFrame):
+class ChapterTile(DraggableTile):
+    drag_kind = DragController.CHAPTER
+
     def __init__(self, ws: "Workspace", index: int, module: Module, entries: list[Entry]):
         super().__init__()
-        self.ws = ws
+        self._init_drag(ws)
         self.index = index
         self.module = module
-        self._press: QPoint | None = None
         self.setObjectName("chapterTile")
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         lang = ws.lang
@@ -568,18 +655,8 @@ class ChapterTile(QFrame):
         self.expand_btn.setIcon(icon("chevron-down" if vis else "chevron-right", "#6b7385"))
         (self.ws.expanded.add if vis else self.ws.expanded.discard)(self.module.id)
 
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self._press = e.position().toPoint()
-
-    def mouseMoveEvent(self, e):
-        if self._press is not None and (e.position().toPoint() - self._press).manhattanLength() \
-                >= QApplication.startDragDistance():
-            self._press = None
-            start_drag(self, CHAPTER_MIME, str(self.index))
-
-    def mouseReleaseEvent(self, e):
-        self._press = None
+    def drag_payload(self) -> str:
+        return str(self.index)
 
     def mouseDoubleClickEvent(self, e):
         self.toggle()
@@ -594,7 +671,6 @@ class ChapterList(QWidget):
     def __init__(self, ws: "Workspace"):
         super().__init__()
         self.ws = ws
-        self.setAcceptDrops(True)
         self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(0, 0, 4, 0)
         self.lay.setSpacing(6)
@@ -620,42 +696,22 @@ class ChapterList(QWidget):
             self.empty.show()
         self.lay.addStretch()
 
-    def _index_at(self, y: int) -> int:
+    def index_at(self, y: int) -> int:
         for i, t in enumerate(self.tiles):
             if y < t.geometry().center().y():
                 return i
         return len(self.tiles)
 
-    def _show_indicator(self, idx: int) -> None:
+    def show_indicator(self, idx: int) -> None:
+        if self.indicator.isVisible() and self.lay.indexOf(self.indicator) == idx:
+            return
         self.lay.removeWidget(self.indicator)
         self.lay.insertWidget(idx, self.indicator)
         self.indicator.show()
 
-    def _hide_indicator(self) -> None:
+    def hide_indicator(self) -> None:
         self.lay.removeWidget(self.indicator)
         self.indicator.hide()
-
-    def dragEnterEvent(self, e):
-        if e.mimeData().hasFormat(MODULE_MIME) or e.mimeData().hasFormat(CHAPTER_MIME):
-            e.acceptProposedAction()
-
-    def dragMoveEvent(self, e):
-        if e.mimeData().hasFormat(MODULE_MIME) or e.mimeData().hasFormat(CHAPTER_MIME):
-            self._show_indicator(self._index_at(int(e.position().y())))
-            e.acceptProposedAction()
-
-    def dragLeaveEvent(self, e):
-        self._hide_indicator()
-
-    def dropEvent(self, e):
-        self._hide_indicator()
-        idx = self._index_at(int(e.position().y()))
-        md = e.mimeData()
-        if md.hasFormat(MODULE_MIME):
-            self.ws.add_module(bytes(md.data(MODULE_MIME)).decode(), idx)
-        elif md.hasFormat(CHAPTER_MIME):
-            self.ws.move_index(int(bytes(md.data(CHAPTER_MIME)).decode()), idx)
-        e.acceptProposedAction()
 
 
 class VariablesDialog(QDialog):
@@ -742,7 +798,7 @@ class ManualPanel(QFrame):
         lay.addWidget(data)
 
         self.chapters = ChapterList(ws)
-        sc = QScrollArea()
+        sc = self.chapter_scroll = QScrollArea()
         sc.setWidgetResizable(True)
         sc.setFrameShape(QFrame.Shape.NoFrame)
         sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -812,6 +868,7 @@ class Workspace(QWidget):
         self.expanded: set[str] = set()
         self.thread: QThread | None = None
         self.last_result = None
+        self.drag = DragController(self)
         self.save_timer = QTimer(self, singleShot=True, interval=400, timeout=self.save)
 
         lay = QVBoxLayout(self)
@@ -857,6 +914,10 @@ class Workspace(QWidget):
         undo.setShortcut(QKeySequence.StandardKey.Undo)
         undo.triggered.connect(self.undo)
         self.addAction(undo)
+        cancel = QAction(self)
+        cancel.setShortcut(QKeySequence(Qt.Key.Key_Escape))
+        cancel.triggered.connect(lambda: self.drag.end(None))
+        self.addAction(cancel)
         build = QAction(self)
         build.setShortcut(QKeySequence("Ctrl+B"))
         build.triggered.connect(self.build)

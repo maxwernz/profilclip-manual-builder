@@ -1,4 +1,4 @@
-"""GUI smoke test: drag & drop logic of the workspace (runs offscreen, skipped on CI)."""
+"""GUI smoke test: drag & drop with simulated mouse events (offscreen, skipped on CI)."""
 
 import os
 import shutil
@@ -21,57 +21,85 @@ def app():
     return a
 
 
-def _drop(widget, mime_type: str, payload: str, y: int):
-    from PySide6.QtCore import QMimeData, QPointF, Qt
-    from PySide6.QtGui import QDropEvent
-    md = QMimeData()
-    md.setData(mime_type, payload.encode())
-    ev = QDropEvent(QPointF(10, y), Qt.DropAction.MoveAction, md, Qt.MouseButton.LeftButton,
-                    Qt.KeyboardModifier.NoModifier)
-    widget.dropEvent(ev)
+def _mouse(widget, kind, local, buttons):
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+    types = {"press": QEvent.Type.MouseButtonPress, "move": QEvent.Type.MouseMove,
+             "release": QEvent.Type.MouseButtonRelease}
+    g = widget.mapToGlobal(local)
+    btn = Qt.MouseButton.NoButton if kind == "move" else Qt.MouseButton.LeftButton
+    ev = QMouseEvent(types[kind], QPointF(local), QPointF(g), btn, buttons, Qt.KeyboardModifier.NoModifier)
+    QApplication.sendEvent(widget, ev)
+
+
+def drag(app, source, target, target_local):
+    """Press on source, move onto target (in target coordinates), release."""
+    from PySide6.QtCore import QPoint, Qt
+    left = Qt.MouseButton.LeftButton
+    start = QPoint(20, 20)
+    _mouse(source, "press", start, left)
+    _mouse(source, "move", start + QPoint(30, 0), left)
+    dst = source.mapFromGlobal(target.mapToGlobal(target_local))
+    _mouse(source, "move", dst, left)
+    _mouse(source, "release", dst, Qt.MouseButton.NoButton)
+    for _ in range(3):
+        app.processEvents()
 
 
 def test_drag_and_drop_flow(app, tmp_path):
-    from manual_builder.gui.main_window import CHAPTER_MIME, MODULE_MIME, MainWindow
+    from PySide6.QtCore import QPoint
+    from manual_builder.gui.main_window import ChapterTile, LibraryTile, MainWindow
     from manual_builder.library import Library, Machine
 
     lib_dir = tmp_path / "lib"
     shutil.copytree(LIB, lib_dir, ignore=shutil.ignore_patterns("archive"))
-    lib = Library(lib_dir)
-    win = MainWindow(lib)
+    win = MainWindow(Library(lib_dir))
+    win.resize(1480, 1500)   # all chapter tiles visible without scrolling
     win.show()
     app.processEvents()
     ws = win.workspace
-    assert ws.machine is not None
     start = list(ws.machine.modules)
 
-    # drop a library tile at the end of the manual
+    def lib_tile(mid):
+        return next(t for t in win.findChildren(LibraryTile) if t.module.id == mid and t.isVisible())
+
     chapters = ws.manual.chapters
-    _drop(chapters, MODULE_MIME, "option-drucker", 100000)
-    assert ws.machine.modules[-1] == "option-drucker"
+    viewport = ws.manual.chapter_scroll.viewport()
+    bottom = QPoint(50, viewport.height() - 5)
 
-    # dropping another clipper replaces the current one (only one allowed)
-    _drop(chapters, MODULE_MIME, "clipper-dcx5fc", 0)
-    assert "clipper-dcx5fc" in ws.machine.modules and "clipper-dcx5s" not in ws.machine.modules
+    # library tile → end of the manual
+    new = next(m for m in ("option-drucker", "option-sammelpacker", "option-waage") if m not in start)
+    drag(app, lib_tile(new), viewport, bottom)
+    assert ws.machine.modules[-1] == new
+    assert not ws.drag.active and ws.drag.ghost is None
 
-    # reorder: move first chapter tile to the end
+    # another clipper variant replaces the current one
+    other = "clipper-dcx5fc" if "clipper-dcx5s" in ws.machine.modules else "clipper-dcx5s"
+    drag(app, lib_tile(other), chapters, QPoint(50, 5))
+    assert other in ws.machine.modules
+    assert len([m for m in ws.machine.modules if m.startswith("clipper")]) == 1
+
+    # reorder: first chapter tile → end
     first = ws.machine.modules[0]
-    _drop(chapters, CHAPTER_MIME, "0", 100000)
+    tiles = [t for t in win.findChildren(ChapterTile) if t.isVisible()]
+    drag(app, min(tiles, key=lambda t: t.index), viewport, bottom)
     assert ws.machine.modules[-1] == first
 
-    # drag a chapter back onto the library removes it
+    # chapter tile dragged onto the library is removed
     n = len(ws.machine.modules)
-    _drop(ws.library, CHAPTER_MIME, str(n - 1), 10)
+    tiles = [t for t in win.findChildren(ChapterTile) if t.isVisible()]
+    drag(app, max(tiles, key=lambda t: t.index), ws.library, QPoint(200, 200))
     assert len(ws.machine.modules) == n - 1
 
-    # undo everything step by step
+    # releasing somewhere else does nothing
+    before = list(ws.machine.modules)
+    drag(app, lib_tile("option-beutelkontrolle"), win.machines, QPoint(50, 300))
+    assert ws.machine.modules == before
+
     for _ in range(4):
         ws.undo()
     assert ws.machine.modules == start
-
-    # autosave writes the file
-    ws.add_module("option-waage") if "option-waage" not in ws.machine.modules else ws.remove_index(
-        ws.machine.modules.index("option-waage"))
     ws.save()
-    assert Machine.load(ws.machine.path).modules == ws.machine.modules
+    assert Machine.load(ws.machine.path).modules == start
     win.close()
