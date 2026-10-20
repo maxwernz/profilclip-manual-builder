@@ -2,6 +2,10 @@
 
 Neue Versionen stehen oben. Der Abschnitt einer Version erscheint in der App als „Was ist neu?“.
 
+## 0.2.1 – 2026-10-20
+
+- Test der automatischen Updates (keine inhaltlichen Änderungen)
+
 ## 0.2.0 – 2026-10-20
 
 - Neues App-Symbol, Profil-Clip-Farben und Logo
