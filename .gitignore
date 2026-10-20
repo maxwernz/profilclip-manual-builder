@@ -1,0 +1,17 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# PyInstaller
+build/
+dist/
+
+# generated manuals and the module library live outside this repo
+output/
+library/
+
+# OS / Office
+.DS_Store
+~$*
