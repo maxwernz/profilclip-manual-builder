@@ -1,8 +1,16 @@
-# Manual Builder
+# Anleitungs-Baukasten (Manual Builder)
 
-Desktop app (macOS + Windows) that assembles Profil-Clip operating manuals from Word modules.
-You pick the parts of a machine; the app merges the matching `.docx` files into one manual,
-numbers all chapters, builds the table of contents and the page numbers, and exports DOCX + PDF.
+Desktop app (macOS + Windows) that assembles Profil-Clip operating manuals from Word modules
+("Bausteine"). You pick the parts of a machine; the app merges the matching `.docx` files into one
+manual, numbers all chapters, builds the table of contents and the page numbers, and exports DOCX + PDF.
+
+The app has two pages:
+
+- **Anleitungen**: one card per machine. Opening a machine shows (1) machine data, (2) equipment,
+  with one choice per component, and (3) a live preview of the table of contents, plus a single
+  "PDF erstellen" button. Changes are saved automatically.
+- **Bausteine**: the Word modules with their maintenance/spare-part/fault tables, for whoever maintains
+  the texts. "Word-Datei hinzufügen" checks and adds new or updated files.
 
 Each module is self-contained: its text (Word) **plus** structured tables for maintenance, wear/spare
 parts and fault codes. These tables are printed in the module's own chapter, and also combined into a
@@ -63,6 +71,15 @@ Rules for writing modules are in [docs/Word-Regeln.md](docs/Word-Regeln.md).
 
 Code map: `normalize.py` (cleanup), `build.py` (assembly), `engines.py` (Word/LibreOffice),
 `library.py` (data model), `importer.py`, `seed.py` (one-time legacy import), `gui/`.
+
+## Reference: the old manual
+
+`tools/render_reference.py` merges the original files in the old order without any changes
+(typed chapter numbers, one big fault table), so new output can be compared with the old manual:
+
+```bash
+uv run python tools/render_reference.py ../Bedienungsanleitungen ~/ProfilClip/Referenz
+```
 
 ## Packaging
 

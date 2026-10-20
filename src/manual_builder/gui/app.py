@@ -65,9 +65,11 @@ def choose_library(parent=None) -> Library | None:
 
 def run(library: Path | None = None) -> int:
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName("Manual Builder")
+    app.setApplicationName("Anleitungs-Baukasten")
     app.setOrganizationName("ProfilClip")
     app.setApplicationVersion(__version__)
+    from . import style
+    style.apply(app)
     translator = QTranslator(app)   # German texts for standard buttons (Speichern, Abbrechen …)
     if translator.load(QLocale(QLocale.Language.German), "qtbase", "_",
                        QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):

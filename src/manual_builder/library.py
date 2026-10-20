@@ -177,6 +177,7 @@ class Machine:
     language: str = "de"
     modules: list[str] = field(default_factory=list)
     variables: dict[str, str] = field(default_factory=dict)
+    last_built: str = ""
     path: Path | None = None
 
     @classmethod
@@ -188,6 +189,7 @@ class Machine:
             modules=list(d.get("modules") or []),
             variables={str(k): "" if v is None else str(v)
                        for k, v in (d.get("variables") or {}).items()},
+            last_built=str(d.get("last_built") or ""),
             path=path,
         )
 
@@ -200,6 +202,7 @@ class Machine:
             "language": self.language,
             "modules": self.modules,
             "variables": self.variables,
+            **({"last_built": self.last_built} if self.last_built else {}),
         })
         self.path = path
         return path

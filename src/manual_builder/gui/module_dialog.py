@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QDialogButtonBox,
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QGridLayout,
                                QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
                                QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
                                QStyledItemDelegate, QTableWidget, QTableWidgetItem, QTabWidget,
@@ -62,6 +62,8 @@ class DataTable(QWidget):
         self.table.setWordWrap(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setItemDelegate(MultiLineDelegate(self.table))
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
         hh = self.table.horizontalHeader()
         for i, (key, _, translated, numeric) in enumerate(self.cols):
             hh.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch if translated
@@ -69,7 +71,7 @@ class DataTable(QWidget):
         lay.addWidget(self.table)
         row = QHBoxLayout()
         for text, slot in (("Zeile hinzufügen", self.add_row), ("Zeilen löschen", self.delete_rows),
-                           ("In anderes Modul verschieben …", self.move_rows)):
+                           ("In anderen Baustein verschieben …", self.move_rows)):
             b = QPushButton(text)
             b.clicked.connect(slot)
             row.addWidget(b)
@@ -147,8 +149,8 @@ class DataTable(QWidget):
         lib = self.dialog.lib
         others = [m for m in lib.modules.values() if m.id != self.dialog.module.id]
         names = [f"{m.label()}  [{m.id}]" for m in others]
-        choice, ok = QInputDialog.getItem(self, "In anderes Modul verschieben",
-                                          "Zielmodul:", names, 0, False)
+        choice, ok = QInputDialog.getItem(self, "In anderen Baustein verschieben",
+                                          "Ziel-Baustein:", names, 0, False)
         if not ok:
             return
         target = others[names.index(choice)]
@@ -180,12 +182,27 @@ class ModuleDialog(QDialog):
         self.module = module
         self.lang = lang
         self.changed_other = False
-        self.setWindowTitle(f"Modul: {module.label(lang)}")
-        self.resize(1100, 720)
+        self.setWindowTitle(f"Baustein: {module.label(lang)}")
+        self.resize(1100, 760)
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(12)
 
         top = QHBoxLayout()
-        top.addWidget(QLabel("Sprache der Texte:"))
+        col = QVBoxLayout()
+        col.setSpacing(4)
+        t = QLabel(module.label(lang))
+        t.setObjectName("title")
+        col.addWidget(t)
+        sub = QLabel("Wartung, Ersatzteile und Störungen werden als Tabellen ans Ende des Kapitels gesetzt "
+                     "und in die Gesamtübersichten der Anleitung übernommen. Doppelklick auf eine Zelle "
+                     "zum Bearbeiten.")
+        sub.setObjectName("subtitle")
+        sub.setWordWrap(True)
+        col.addWidget(sub)
+        top.addLayout(col, 1)
+        top.addSpacing(16)
+        top.addWidget(QLabel("Sprache:"))
         self.lang_box = QComboBox()
         for code in lib.languages:
             self.lang_box.addItem(lang_name(code), code)
@@ -202,19 +219,29 @@ class ModuleDialog(QDialog):
         for section in DATA_SECTIONS:
             t = DataTable(section, self)
             self.tables[section] = t
-            self.tabs.addTab(t, f"{SECTION_TITLES[section]} ({len(t.entries)})")
+            self.tabs.addTab(t, f"{SECTION_TITLES[section]}  {len(t.entries)}")
             t.load(self.lang)
 
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        bb.accepted.connect(self.save)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        bb = QHBoxLayout()
+        bb.addStretch()
+        cancel = QPushButton("Abbrechen")
+        cancel.clicked.connect(self.reject)
+        save = QPushButton("Speichern")
+        save.setObjectName("primary")
+        save.clicked.connect(self.save)
+        bb.addWidget(cancel)
+        bb.addWidget(save)
+        lay.addLayout(bb)
+        self.tabs.setCurrentIndex(3 if self.module.entries("faults") else 0)
 
     # ---------------------------------------------------------------- info tab
     def _build_info_tab(self) -> None:
         m = self.module
         w = QWidget()
-        form = QFormLayout(w)
+        outer = QVBoxLayout(w)
+        form = QFormLayout()
+        outer.addLayout(form)
+        outer.addStretch()
         self.title_edit = QLineEdit()
         self.component_edit = QLineEdit()
         self.component_edit.setPlaceholderText("leer = Titel; Name in den Übersichtstabellen")
@@ -230,40 +257,62 @@ class ModuleDialog(QDialog):
         self.desc_edit.setFixedHeight(60)
         self.conflicts_edit = QLineEdit(", ".join(m.conflicts))
         self.requires_edit = QLineEdit(", ".join(m.requires))
-        form.addRow("ID:", QLabel(f"{m.id}   (Version {m.version})"))
-        form.addRow("Titel:", self.title_edit)
-        form.addRow("Kurzname:", self.component_edit)
-        form.addRow("Platz in der Anleitung:", self.slot_box)
-        form.addRow("Art:", self.kind_box)
+        form.setContentsMargins(18, 16, 18, 16)
+        form.setVerticalSpacing(10)
+        form.addRow("Name:", self.title_edit)
+        form.addRow("Baugruppe:", self.slot_box)
         form.addRow("Beschreibung:", self.desc_edit)
-        form.addRow("Schließt aus (IDs):", self.conflicts_edit)
-        form.addRow("Benötigt (IDs):", self.requires_edit)
 
         files = QWidget()
-        fl = QVBoxLayout(files)
+        fl = QGridLayout(files)
         fl.setContentsMargins(0, 0, 0, 0)
-        for code in self.lib.languages:
-            row = QHBoxLayout()
+        fl.setHorizontalSpacing(12)
+        fl.setVerticalSpacing(4)
+        for r, code in enumerate(self.lib.languages):
             p = m.docx_path(code)
-            row.addWidget(QLabel(f"{lang_name(code)}: " + ("vorhanden" if p.exists() else "—")))
+            fl.addWidget(QLabel(lang_name(code)), r, 0)
             if p.exists():
                 b = QPushButton("In Word öffnen")
+                b.setObjectName("link")
                 b.clicked.connect(lambda _=False, p=p: open_path(p))
-                row.addWidget(b)
-            row.addStretch()
-            fl.addLayout(row)
-        b = QPushButton("Modulordner öffnen")
+                fl.addWidget(b, r, 1, Qt.AlignmentFlag.AlignLeft)
+            else:
+                miss = QLabel("noch nicht vorhanden – über „Word-Datei hinzufügen“ ergänzen")
+                miss.setObjectName("hint")
+                fl.addWidget(miss, r, 1)
+        b = QPushButton("Ordner öffnen")
+        b.setObjectName("link")
         b.clicked.connect(lambda: open_path(m.path))
-        fl.addWidget(b)
+        fl.addWidget(b, len(self.lib.languages), 0, 1, 2, Qt.AlignmentFlag.AlignLeft)
+        fl.setColumnStretch(1, 1)
         form.addRow("Word-Dateien:", files)
 
         hist = QListWidget()
         for h in reversed(m.history):
             hist.addItem(f"v{h.get('version')}  {h.get('date', '')}  "
                          f"{('[' + h['language'] + '] ') if h.get('language') else ''}{h.get('note', '')}")
-        hist.setFixedHeight(110)
+        hist.setFixedHeight(90)
         form.addRow("Verlauf:", hist)
-        self.tabs.addTab(w, "Allgemein")
+        adv_btn = QPushButton("Erweitert anzeigen")
+        adv_btn.setObjectName("link")
+        adv = QWidget()
+        af = QFormLayout(adv)
+        af.setContentsMargins(0, 0, 0, 0)
+        af.addRow("Interne ID:", QLabel(f"{m.id}   (Version {m.version})"))
+        af.addRow("Kurzname in Übersichten:", self.component_edit)
+        af.addRow("Art:", self.kind_box)
+        af.addRow("Schließt aus (IDs):", self.conflicts_edit)
+        af.addRow("Benötigt (IDs):", self.requires_edit)
+        adv.setVisible(False)
+        adv_btn.clicked.connect(lambda: (adv.setVisible(not adv.isVisible()),
+                                         adv_btn.setText("Erweitert ausblenden" if adv.isVisible()
+                                                         else "Erweitert anzeigen")))
+        adv_row = QHBoxLayout()
+        adv_row.addWidget(adv_btn)
+        adv_row.addStretch()
+        form.addRow("", adv_row)
+        form.addRow(adv)
+        self.tabs.insertTab(0, w, "Allgemein")
         self._load_titles()
 
     def _load_titles(self) -> None:
