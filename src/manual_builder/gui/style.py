@@ -21,7 +21,6 @@ ERROR = "#b42318"
 QSS = f"""
 * {{ font-size: 13px; color: {TEXT}; }}
 QMainWindow, QDialog, #page {{ background: {BG}; }}
-#aboutSheet {{ background: #ffffff; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
 
 #sidebar {{ background: #ffffff; border-right: 1px solid {BORDER}; }}

@@ -39,7 +39,6 @@ from .flow import FlowLayout
 from .icons import icon, pixmap, slot_style
 from .import_dialog import ImportDialog
 from .module_dialog import ModuleDialog
-from .. import __version__
 from .style import ACCENT, ASSETS, ERROR, MUTED, OK, WARN
 
 LANG_LABELS = {"de": "Deutsch", "en": "English", "it": "Italiano", "fr": "Français", "es": "Español"}
@@ -397,7 +396,6 @@ class MachinesPanel(QFrame):
         sc.setWidget(host)
         lay.addWidget(sc, 1)
         lay.addWidget(text_button("Einstellungen", "settings", "flat", lambda: SettingsDialog(win).exec()))
-        lay.addWidget(text_button("Info && Kontakt", "info", "flat", lambda: AboutDialog(win).exec()))
 
     def refresh(self, current: Path | None = None) -> None:
         if current is None and self.win.workspace.machine is not None:
@@ -1384,54 +1382,6 @@ class SettingsDialog(QDialog):
         else:
             self.win.workspace.refresh()
         self.accept()
-
-
-# ---------------------------------------------------------------- about / contact
-
-class AboutDialog(QDialog):
-    def __init__(self, win: "MainWindow"):
-        super().__init__(win)
-        self.setWindowTitle("Info & Kontakt")
-        self.setMinimumWidth(520)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        sheet = QFrame()
-        sheet.setObjectName("aboutSheet")
-        outer.addWidget(sheet)
-        lay = QVBoxLayout(sheet)
-        lay.setContentsMargins(28, 24, 28, 20)
-        lay.setSpacing(10)
-        logo = LogoLabel(300)
-        lay.addWidget(logo)
-        lay.addSpacing(6)
-        lay.addWidget(label("Anleitungs-Baukasten", "title"))
-        lay.addWidget(label(f"Version {__version__} · Betriebsanleitungen aus Bausteinen zusammenstellen",
-                            "subtitle", wrap=True))
-        lay.addSpacing(8)
-        v = win.lib.default_variables("de")
-        box = QFrame()
-        box.setObjectName("subCard")
-        bl = QGridLayout(box)
-        bl.setContentsMargins(16, 12, 16, 12)
-        bl.setHorizontalSpacing(12)
-        bl.setVerticalSpacing(8)
-        rows = [("machine", v.get("Hersteller", "Profi L-Clip GmbH")),
-                ("folder", v.get("Herstelleranschrift", "")),
-                ("phone", f"Tel. {v.get('Telefon', '')}   ·   Fax {v.get('Fax', '')}"),
-                ("mail", f"<a href='mailto:{v.get('E-Mail', '')}'>{v.get('E-Mail', '')}</a>"),
-                ("globe", f"<a href='https://{v.get('Web', '')}'>{v.get('Web', '')}</a>")]
-        for r, (ic, text) in enumerate(rows):
-            bl.addWidget(icon_label(ic, ACCENT, 16), r, 0)
-            lbl = label(text, None, wrap=True)
-            lbl.setOpenExternalLinks(True)
-            bl.addWidget(lbl, r, 1)
-        bl.setColumnStretch(1, 1)
-        lay.addWidget(box)
-        lay.addWidget(label(f"Bibliothek: {win.lib.root}", "hint", wrap=True))
-        lay.addWidget(label("Schrift Manrope (SIL Open Font License) · Qt for Python (LGPL)", "hint", wrap=True))
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
 
 
 # ---------------------------------------------------------------- window
