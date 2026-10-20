@@ -125,6 +125,10 @@ QToolButton#iconButton::menu-indicator {{ image: none; width: 0; }}
 QPushButton#flat {{ border: none; background: transparent; color: #3b4456; padding: 6px 8px;
                     text-align: left; }}
 QPushButton#flat:hover {{ background: #eef2f7; }}
+QSplitter::handle {{ background: transparent; }}
+QSplitter::handle:hover {{ background: #d6e2f3; border-radius: 3px; }}
+QSplitter#mainSplit::handle {{ background: {BORDER}; }}
+QSplitter#mainSplit::handle:hover {{ background: {ACCENT}; }}
 QToolTip {{ background: #1d2433; color: #ffffff; border: none; padding: 6px 8px; border-radius: 6px; }}
 QMenu {{ background: #fff; border: 1px solid {BORDER}; border-radius: 8px; padding: 4px; }}
 QMenu::item {{ padding: 6px 18px; border-radius: 5px; }}

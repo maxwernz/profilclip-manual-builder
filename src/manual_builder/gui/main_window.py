@@ -17,6 +17,7 @@ back (or ×) to remove them. Changes are saved automatically; Ctrl+Z undoes.
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import traceback
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, Q
                                QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
+                               QSplitter,
                                QToolButton, QVBoxLayout, QWidget)
 
 from ..build import BuildError, build_manual
@@ -54,6 +56,61 @@ def label(text: str = "", name: str | None = None, wrap: bool = False) -> QLabel
         lbl.setObjectName(name)
     lbl.setWordWrap(wrap)
     return lbl
+
+
+class ElidedLabel(QLabel):
+    """One-line label that shortens itself with "…" when there is not enough room.
+    The full text is shown as tooltip. Width follows the layout (any size)."""
+
+    def __init__(self, text: str = "", name: str | None = None, lines: int = 1):
+        super().__init__()
+        if name:
+            self.setObjectName(name)
+        self._full = ""
+        self._lines = lines
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setWordWrap(lines > 1)
+        if lines > 1:
+            self.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802 (Qt naming)
+        self._full = text or ""
+        self._update()
+
+    def fullText(self) -> str:  # noqa: N802
+        return self._full
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._update()
+
+    def minimumSizeHint(self):
+        sh = super().minimumSizeHint()
+        sh.setWidth(20)
+        return sh
+
+    def _update(self) -> None:
+        fm = self.fontMetrics()
+        width = max(self.width() - 2, 10)
+        if self._lines == 1:
+            shown = fm.elidedText(self._full, Qt.TextElideMode.ElideRight, width)
+        else:   # wrap over several lines, shorten the rest
+            words, lines, cur = self._full.split(), [], ""
+            for w in words:
+                trial = f"{cur} {w}".strip()
+                if fm.horizontalAdvance(trial) <= width or not cur:
+                    cur = trial
+                else:
+                    lines.append(cur)
+                    cur = w
+            lines.append(cur)
+            if len(lines) > self._lines:
+                lines = lines[:self._lines - 1] + [" ".join(lines[self._lines - 1:])]
+            lines = [fm.elidedText(l, Qt.TextElideMode.ElideRight, width) for l in lines]
+            shown = "\n".join(lines)
+        super().setText(shown)
+        self.setToolTip(self._full if shown.replace("\n", " ") != self._full else "")
 
 
 def icon_label(name: str, color: str, size: int = 18) -> QLabel:
@@ -258,10 +315,10 @@ class MachineItem(QFrame):
         lay.addWidget(badge("machine", ACCENT if selected else "#64748b", 30, 16))
         col = QVBoxLayout()
         col.setSpacing(1)
-        col.addWidget(label(machine.name, "machineName"))
+        col.addWidget(ElidedLabel(machine.name, "machineName"))
         typ = machine.variables.get("Maschinentyp", "")
         sub = " · ".join(x for x in (typ, machine.language.upper(), f"{len(machine.modules)} Bausteine") if x)
-        col.addWidget(label(sub, "hint"))
+        col.addWidget(ElidedLabel(sub, "hint"))
         lay.addLayout(col, 1)
         more = QToolButton()
         more.setObjectName("iconButton")
@@ -282,7 +339,7 @@ class MachinesPanel(QFrame):
         super().__init__()
         self.win = win
         self.setObjectName("sidebar")
-        self.setFixedWidth(250)
+        self.setMinimumWidth(190)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 18, 12, 12)
         lay.setSpacing(6)
@@ -290,8 +347,8 @@ class MachinesPanel(QFrame):
         brand.addWidget(badge("layers", ACCENT, 34, 20))
         col = QVBoxLayout()
         col.setSpacing(0)
-        col.addWidget(label("Anleitungs-Baukasten", "appName"))
-        col.addWidget(label("Profil-Clip", "appSub"))
+        col.addWidget(ElidedLabel("Anleitungs-Baukasten", "appName"))
+        col.addWidget(ElidedLabel("Profil-Clip", "appSub"))
         brand.addLayout(col, 1)
         lay.addLayout(brand)
         lay.addSpacing(16)
@@ -438,9 +495,8 @@ class LibraryTile(DraggableTile):
         more.setMenu(ws.library.module_menu(module, self))
         top.addWidget(more)
         lay.addLayout(top)
-        title = label(module.label(lang), "tileTitle", wrap=True)
+        title = ElidedLabel(module.label(lang), "tileTitle", lines=2)
         title.setFixedHeight(36)
-        title.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         lay.addWidget(title)
         lay.addStretch()
         have = module.languages()
@@ -482,6 +538,7 @@ class LibraryPanel(QFrame):
         super().__init__()
         self.ws = ws
         self.setObjectName("panel")
+        self.setMinimumWidth(340)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(18, 14, 10, 12)
         lay.setSpacing(10)
@@ -493,12 +550,16 @@ class LibraryPanel(QFrame):
         self.search.setPlaceholderText("Baustein suchen …")
         self.search.addAction(icon("search", "#8a93a3"), QLineEdit.ActionPosition.LeadingPosition)
         self.search.textChanged.connect(lambda: self.refresh())
+        self.search.setMinimumWidth(90)
         head.addWidget(self.search, 1)
-        head.addWidget(text_button("Word-Datei hinzufügen", "upload", None, lambda: self.import_file()))
+        self.add_btn = text_button("Word-Datei hinzufügen", "upload", None, lambda: self.import_file())
+        self.add_btn.setToolTip("Neue oder geänderte Word-Datei hinzufügen")
+        head.addWidget(self.add_btn)
         head.addSpacing(6)
         lay.addLayout(head)
-        lay.addWidget(label("Bausteine in die Anleitung ziehen · Doppelklick fügt hinzu · "
-                            "zum Entfernen zurück hierher ziehen", "hint"))
+        self.hint = ElidedLabel("Bausteine in die Anleitung ziehen · Doppelklick fügt hinzu · "
+                                "zum Entfernen zurück hierher ziehen", "hint")
+        lay.addWidget(self.hint)
         host = QWidget()
         self.sections = QVBoxLayout(host)
         self.sections.setContentsMargins(0, 0, 8, 0)
@@ -572,6 +633,12 @@ class LibraryPanel(QFrame):
         if dlg.exec():
             self.ws.reload_library()
 
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        # narrow library: button shows only its icon
+        self.add_btn.setText("" if self.width() < 560 else "Word-Datei hinzufügen")
+        self.hint.setVisible(self.width() >= 520)
+
     def set_drop_highlight(self, on: bool) -> None:
         """Shown while a chapter tile is dragged over the library: dropping removes it."""
         if bool(self.property("dropTarget")) != on:
@@ -607,8 +674,7 @@ class ChapterTile(DraggableTile):
         row.addWidget(badge(icon_name, color, 30, 17))
         col = QVBoxLayout()
         col.setSpacing(1)
-        title = label(module.label(lang), "tileTitle")
-        title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        title = ElidedLabel(module.label(lang), "tileTitle")
         col.addWidget(title)
         subs = sum(len(e.children) for e in entries)
         slot = ws.win.lib.slot(module.slot)
@@ -620,9 +686,7 @@ class ChapterTile(DraggableTile):
         n_f = len(module.entries("faults"))
         if n_f:
             bits.append(f"{n_f} Störungen")
-        sub = label(" · ".join(bits), "hint")
-        sub.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        sub.setToolTip(" · ".join(bits))
+        sub = ElidedLabel(" · ".join(bits), "hint")
         col.addWidget(sub)
         row.addLayout(col, 1)
         if module.has_text() and lang not in module.languages():
@@ -762,7 +826,7 @@ class ManualPanel(QFrame):
         super().__init__()
         self.ws = ws
         self.setObjectName("panel")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(360)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 14, 16, 14)
         lay.setSpacing(10)
@@ -886,8 +950,10 @@ class Workspace(QWidget):
         self.name_edit.setObjectName("titleEdit")
         self.name_edit.setToolTip("Name der Maschine – zum Ändern klicken")
         self.name_edit.textEdited.connect(self._name_changed)
+        self.name_edit.editingFinished.connect(lambda: self.name_edit.setCursorPosition(0))
+        self.name_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         col.addWidget(self.name_edit)
-        self.subtitle = label("", "hint")
+        self.subtitle = ElidedLabel("", "hint")
         self.subtitle.setContentsMargins(8, 0, 0, 0)
         col.addWidget(self.subtitle)
         head.addLayout(col, 1)
@@ -902,13 +968,16 @@ class Workspace(QWidget):
         head.addWidget(self.build_btn)
         lay.addLayout(head)
 
-        body = QHBoxLayout()
-        body.setSpacing(14)
+        self.body = QSplitter(Qt.Orientation.Horizontal)
+        self.body.setHandleWidth(14)
+        self.body.setChildrenCollapsible(False)
         self.library = LibraryPanel(self)
         self.manual = ManualPanel(self)
-        body.addWidget(self.library, 3)
-        body.addWidget(self.manual, 2)
-        lay.addLayout(body, 1)
+        self.body.addWidget(self.library)
+        self.body.addWidget(self.manual)
+        self.body.setStretchFactor(0, 3)
+        self.body.setStretchFactor(1, 2)
+        lay.addWidget(self.body, 1)
 
         undo = QAction(self)
         undo.setShortcut(QKeySequence.StandardKey.Undo)
@@ -939,9 +1008,12 @@ class Workspace(QWidget):
         for w in (self.name_edit, self.build_btn, self.manual, self.library):
             w.setEnabled(enabled)
         self.name_edit.setText(machine.name if machine else "Keine Maschine gewählt")
+        self.name_edit.setCursorPosition(0)   # long names: show the beginning
+        self.name_edit.setToolTip(machine.name if machine else "")
         self._build_lang_buttons()
         for key, e in self.manual.var_edits.items():
             e.setText(machine.variables.get(key, "") if machine else "")
+            e.setCursorPosition(0)
             e.setPlaceholderText(self.win.lib.default_variables(self.lang).get(key, ""))
         for b in (self.manual.open_pdf, self.manual.open_doc, self.manual.open_dir, self.manual.log_btn):
             b.hide()
@@ -1284,11 +1356,12 @@ class SettingsDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self, lib: Library):
         super().__init__()
-        self.settings = QSettings("ProfilClip", "ManualBuilder")
+        # tests use their own settings so they never touch the user's
+        self.settings = QSettings("ProfilClip", os.environ.get("MANUAL_BUILDER_SETTINGS", "ManualBuilder"))
         self.lib = lib
         self.setWindowTitle("Anleitungs-Baukasten")
         self.resize(1480, 900)
-        self.setMinimumSize(1180, 700)
+        self.setMinimumSize(980, 640)
         root = QWidget()
         root.setObjectName("page")
         rl = QHBoxLayout(root)
@@ -1297,9 +1370,22 @@ class MainWindow(QMainWindow):
         self.workspace = Workspace(self)
         self.machines = MachinesPanel(self)
         self.machines.selected.connect(self.open_machine)
-        rl.addWidget(self.machines)
-        rl.addWidget(self.workspace, 1)
+        self.split = QSplitter(Qt.Orientation.Horizontal)
+        self.split.setObjectName("mainSplit")
+        self.split.setHandleWidth(5)
+        self.split.setChildrenCollapsible(False)
+        self.split.addWidget(self.machines)
+        self.split.addWidget(self.workspace)
+        self.split.setStretchFactor(1, 1)
+        self.split.setSizes([260, 1220])
+        rl.addWidget(self.split)
         self.setCentralWidget(root)
+        # remember panel widths
+        for key, sp in (("split_main", self.split), ("split_body", self.workspace.body)):
+            state = self.settings.value(key)
+            if state is not None:
+                sp.restoreState(state)
+            sp.splitterMoved.connect(lambda *_, k=key, sp=sp: self.settings.setValue(k, sp.saveState()))
         self._open_initial()
 
     def _open_initial(self) -> None:

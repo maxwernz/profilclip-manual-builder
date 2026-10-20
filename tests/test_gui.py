@@ -14,6 +14,7 @@ pytestmark = pytest.mark.skipif(bool(os.environ.get("CI")) or not LIB.exists(),
 @pytest.fixture(scope="module")
 def app():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    os.environ["MANUAL_BUILDER_SETTINGS"] = "ManualBuilderTest"
     from PySide6.QtWidgets import QApplication
     from manual_builder.gui import style
     a = QApplication.instance() or QApplication([])
