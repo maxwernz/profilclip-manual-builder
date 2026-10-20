@@ -68,8 +68,10 @@ def run(library: Path | None = None) -> int:
     app.setApplicationName("Anleitungs-Baukasten")
     app.setOrganizationName("ProfilClip")
     app.setApplicationVersion(__version__)
+    from PySide6.QtGui import QIcon
     from . import style
     style.apply(app)
+    app.setWindowIcon(QIcon(str(style.ASSETS / "clip.png")))
     translator = QTranslator(app)   # German texts for standard buttons (Speichern, Abbrechen …)
     if translator.load(QLocale(QLocale.Language.German), "qtbase", "_",
                        QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):

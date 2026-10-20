@@ -55,7 +55,19 @@ DEFAULT_LIBRARY = {
         {"key": "Seriennummer", "label": "Seriennummer", "default": ""},
         {"key": "Baujahr", "label": "Baujahr", "default": ""},
         {"key": "Ausgabe", "label": "Ausgabedatum (leer = heute)", "default": ""},
+        # manufacturer (title page) – from www.profil-clip.de
+        {"key": "Hersteller", "label": "Hersteller", "default": "Profi L-Clip GmbH"},
+        {"key": "Herstelleranschrift", "label": "Anschrift",
+         "default": {"de": "An der Gumme 3, D-79348 Freiamt, Deutschland",
+                     "en": "An der Gumme 3, D-79348 Freiamt, Germany",
+                     "it": "An der Gumme 3, D-79348 Freiamt, Germania"}},
+        {"key": "Telefon", "label": "Telefon", "default": "+49 (7645) 916499"},
+        {"key": "Fax", "label": "Fax", "default": "+49 (7645) 916536"},
+        {"key": "E-Mail", "label": "E-Mail", "default": "info@profil-clip.de"},
+        {"key": "Web", "label": "Web", "default": "www.profil-clip.de"},
     ],
+    # suggestions for "Maschinentyp" (product range on www.profil-clip.de)
+    "machine_types": ["SKT H10", "Spouted Pouch SP1", "Stick Pack SKT V", "Stick Pack SP40"],
     # text that should usually be a variable – reported when importing
     "watch_terms": ["SKT H10", "SKT-H10", "SKT-10"],
     "labels": {
@@ -67,7 +79,7 @@ DEFAULT_LIBRARY = {
                "faults": "Störungen", "interval": "Intervall", "task": "Tätigkeit",
                "parts": "Teile / Ort", "part_no": "Teilenummer", "description": "Bezeichnung",
                "code": "Störanzeige", "message": "Meldung", "cause": "Ursache",
-               "remedy": "Behebung", "module": "Baugruppe", "page": "Seite", "no": "Nr."},
+               "remedy": "Behebung", "module": "Baugruppe", "page": "Seite", "no": "Nr.", "manufacturer": "Hersteller"},
         "en": {"printed": "Printed", "contents": "Contents",
                "toc_hint": "Table of contents is updated when the manual is built",
                "machine_data": "Machine data", "customer": "Customer", "serial": "Serial number",
@@ -76,7 +88,7 @@ DEFAULT_LIBRARY = {
                "faults": "Faults", "interval": "Interval", "task": "Task",
                "parts": "Parts / location", "part_no": "Part number", "description": "Description",
                "code": "Fault message", "message": "Message", "cause": "Cause",
-               "remedy": "Remedy", "module": "Assembly", "page": "Page", "no": "No."},
+               "remedy": "Remedy", "module": "Assembly", "page": "Page", "no": "No.", "manufacturer": "Manufacturer"},
         "it": {"printed": "Stampato", "contents": "Indice",
                "toc_hint": "L'indice viene aggiornato durante la creazione",
                "machine_data": "Dati macchina", "customer": "Cliente", "serial": "Numero di serie",
@@ -85,7 +97,7 @@ DEFAULT_LIBRARY = {
                "faults": "Guasti", "interval": "Intervallo", "task": "Attività",
                "parts": "Parti / posizione", "part_no": "Codice", "description": "Descrizione",
                "code": "Messaggio di guasto", "message": "Messaggio", "cause": "Causa",
-               "remedy": "Rimedio", "module": "Gruppo", "page": "Pagina", "no": "N."},
+               "remedy": "Rimedio", "module": "Gruppo", "page": "Pagina", "no": "N.", "manufacturer": "Fabbricante"},
     },
 }
 

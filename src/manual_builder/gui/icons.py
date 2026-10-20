@@ -8,6 +8,22 @@ from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
+import math
+
+
+def _gear(teeth: int = 8, r_out: float = 10.2, r_in: float = 7.6, hole: float = 3.0) -> str:
+    """A proper cog wheel: trapezoid teeth around a ring, round hole in the middle."""
+    pts = []
+    step = 2 * math.pi / teeth
+    for i in range(teeth):
+        a = i * step - math.pi / 2
+        for frac, r in ((-0.30, r_in), (-0.17, r_out), (0.17, r_out), (0.30, r_in)):
+            ang = a + frac * step * 1.6
+            pts.append((12 + r * math.cos(ang), 12 + r * math.sin(ang)))
+    d = "M" + " L".join(f"{x:.2f} {y:.2f}" for x, y in pts) + "Z"
+    return f'<path d="{d}"/><circle cx="12" cy="12" r="{hole}"/>'
+
+
 # {c} is replaced by the color (used for filled dots)
 PATHS = {
     "plus": '<path d="M12 5v14M5 12h14"/>',
@@ -15,7 +31,7 @@ PATHS = {
     "trash": '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
     "upload": '<path d="M12 15V4M7 9l5-5 5 5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/>',
     "folder": '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
-    "settings": '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M2.5 12h3M18.5 12h3M4.6 19.4l2.1-2.1M17.3 6.7l2.1-2.1"/>',
+    "settings": _gear(),
     "play": '<path d="M7 4.5l12 7.5-12 7.5z"/>',
     "file": '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
     "pdf": '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M8.5 16.5v-4h1.5a1.2 1.2 0 0 1 0 2.4H8.5M13 12.5v4h1a2 2 0 0 0 0-4z"/>',
@@ -24,7 +40,12 @@ PATHS = {
                     for x in (9, 15) for y in (6, 12, 18)),
     "x": '<path d="M6 6l12 12M18 6L6 18"/>',
     "search": '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
-    "machine": '<path d="M3 21V10l5 3v-3l5 3v-3l5 3V4h3v17z"/><path d="M7 17h2M12 17h2"/>',
+    # tubular bag with clips at both ends (the Profil-Clip product)
+    "machine": '<rect x="2.5" y="8" width="19" height="8" rx="4" transform="rotate(-35 12 12)"/>'
+               '<path d="M20 6.4l1.9-1.3M4 17.6l-1.9 1.3"/>',
+    "clip": '<path d="M18 5.5H9.5A3.5 3.5 0 0 0 6 9v6a3.5 3.5 0 0 0 3.5 3.5H18"/>',
+    "phone": '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
+    "mail": '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     "alert": '<path d="M12 3.5l9.5 17h-19z"/><path d="M12 10v4.5M12 17.5v.01"/>',
     "check": '<path d="M5 12.5l4.5 4.5L19 7"/>',
     "check-circle": '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/>',
@@ -53,18 +74,18 @@ PATHS = {
 }
 
 # look of each place in the manual: (icon, color)
-SLOT_STYLE = {
-    "general": ("book", "#475569"),
-    "dosing": ("droplet", "#0e7490"),
-    "film": ("film", "#4f46e5"),
-    "clipper": ("scissors", "#b45309"),
-    "control": ("monitor", "#0369a1"),
-    "options": ("sliders", "#7c3aed"),
-    "service": ("wrench", "#be123c"),
-    "consumables": ("package", "#4d7c0f"),
-    "ce": ("shield", "#0f766e"),
+SLOT_STYLE = {   # colors from the Profil-Clip website palette
+    "general": ("book", "#0160b2"),
+    "dosing": ("droplet", "#319fc0"),
+    "film": ("film", "#014d8e"),
+    "clipper": ("clip", "#e07b39"),
+    "control": ("monitor", "#2b7bb9"),
+    "options": ("sliders", "#6c6c6c"),
+    "service": ("wrench", "#d9534f"),
+    "consumables": ("package", "#3f9142"),
+    "ce": ("shield", "#b8890f"),
 }
-DEFAULT_SLOT_STYLE = ("puzzle", "#64748b")
+DEFAULT_SLOT_STYLE = ("puzzle", "#6c6c6c")
 
 
 def slot_style(slot_id: str) -> tuple[str, str]:

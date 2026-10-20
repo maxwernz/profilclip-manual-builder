@@ -1,19 +1,19 @@
-"""Look & feel: one calm light theme, identical on macOS and Windows."""
+"""Look & feel: Profil-Clip colors (from profil-clip.de) and the Manrope font, identical on macOS and Windows."""
 
 from __future__ import annotations
 
 import tempfile
 from pathlib import Path
 
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication, QStyleFactory
 
-ACCENT = "#1f5fad"
-ACCENT_HOVER = "#184d8c"
-TEXT = "#1d2433"
-MUTED = "#6b7385"
-BORDER = "#e1e5ec"
-BG = "#f4f6f9"
+ACCENT = "#0160b2"
+ACCENT_HOVER = "#014d8e"
+TEXT = "#212121"
+MUTED = "#6c6c6c"
+BORDER = "#e3e6ea"
+BG = "#f3f5f8"
 OK = "#1e7d4f"
 WARN = "#a15c00"
 ERROR = "#b42318"
@@ -21,15 +21,16 @@ ERROR = "#b42318"
 QSS = f"""
 * {{ font-size: 13px; color: {TEXT}; }}
 QMainWindow, QDialog, #page {{ background: {BG}; }}
+#aboutSheet {{ background: #ffffff; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
 
 #sidebar {{ background: #ffffff; border-right: 1px solid {BORDER}; }}
-#appName {{ font-size: 15px; font-weight: 700; }}
+#appName {{ font-size: 13px; font-weight: 700; color: {ACCENT}; }}
 #appSub {{ color: {MUTED}; font-size: 11px; }}
 #navButton {{ text-align: left; padding: 9px 14px; border: none; border-radius: 8px;
               font-size: 14px; background: transparent; }}
 #navButton:hover {{ background: #f0f3f8; }}
-#navButton:checked {{ background: #e7effa; color: {ACCENT}; font-weight: 600; }}
+#navButton:checked {{ background: #e5eff9; color: {ACCENT}; font-weight: 600; }}
 
 #title {{ font-size: 24px; font-weight: 650; }}
 #titleEdit {{ font-size: 22px; font-weight: 650; border: 1px solid transparent; border-radius: 6px;
@@ -75,7 +76,7 @@ QComboBox {{ padding-right: 28px; }}
 QComboBox::drop-down {{ border: none; width: 28px; }}
 QComboBox::down-arrow {{ image: url({{ICONS}}/chevron.svg); width: 12px; height: 12px; }}
 QComboBox QAbstractItemView {{ border: 1px solid {BORDER}; border-radius: 6px; padding: 4px;
-                               background: #fff; selection-background-color: #e7effa;
+                               background: #fff; selection-background-color: #e5eff9;
                                selection-color: {TEXT}; outline: none; }}
 QCheckBox {{ spacing: 8px; }}
 QCheckBox::indicator {{ width: 16px; height: 16px; border: 1.5px solid #b8c1cf; border-radius: 4px;
@@ -104,7 +105,7 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
 #machineItem {{ border-radius: 10px; border: 1px solid transparent; }}
 #machineItem:hover {{ background: #f3f6fa; }}
-#machineItem[selected="true"] {{ background: #e9f0fb; border-color: #c9daf2; }}
+#machineItem[selected="true"] {{ background: #e5eff9; border-color: #b9d3ee; }}
 #machineName {{ font-weight: 600; }}
 
 #tile {{ background: #ffffff; border: 1px solid {BORDER}; border-radius: 12px; }}
@@ -126,17 +127,17 @@ QPushButton#flat {{ border: none; background: transparent; color: #3b4456; paddi
                     text-align: left; }}
 QPushButton#flat:hover {{ background: #eef2f7; }}
 QSplitter::handle {{ background: transparent; }}
-QSplitter::handle:hover {{ background: #d6e2f3; border-radius: 3px; }}
+QSplitter::handle:hover {{ background: #cfe0f3; border-radius: 3px; }}
 QSplitter#mainSplit::handle {{ background: {BORDER}; }}
 QSplitter#mainSplit::handle:hover {{ background: {ACCENT}; }}
-QToolTip {{ background: #1d2433; color: #ffffff; border: none; padding: 6px 8px; border-radius: 6px; }}
+QToolTip {{ background: #212121; color: #ffffff; border: none; padding: 6px 8px; border-radius: 6px; }}
 QMenu {{ background: #fff; border: 1px solid {BORDER}; border-radius: 8px; padding: 4px; }}
 QMenu::item {{ padding: 6px 18px; border-radius: 5px; }}
-QMenu::item:selected {{ background: #e7effa; color: {TEXT}; }}
+QMenu::item:selected {{ background: #e5eff9; color: {TEXT}; }}
 
 QTreeWidget#preview {{ border: none; background: transparent; }}
 QTreeWidget#preview::item {{ padding: 3px 0; }}
-QTreeWidget#preview::item:selected {{ background: #e7effa; color: {TEXT}; }}
+QTreeWidget#preview::item:selected {{ background: #e5eff9; color: {TEXT}; }}
 
 QProgressBar {{ border: none; background: #e7ecf3; border-radius: 3px; max-height: 6px; }}
 QProgressBar::chunk {{ background: {ACCENT}; border-radius: 3px; }}
@@ -154,7 +155,7 @@ QGroupBox::title {{ subcontrol-origin: margin; left: 12px; padding: 0 4px; font-
 
 
 _CHEVRON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path d="M2.5 4.5l3.5 3.5 3.5-3.5" '
-            'fill="none" stroke="#6b7385" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+            'fill="none" stroke="#6c6c6c" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>')
 _CHECK = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-6.5" '
           'fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>')
 
@@ -167,8 +168,23 @@ def _icon_dir() -> str:
     return d.as_posix()
 
 
+ASSETS = Path(__file__).resolve().parent / "assets"
+
+
+def load_font(app: QApplication) -> None:
+    """Manrope is the font of profil-clip.de (SIL Open Font License, bundled)."""
+    fid = QFontDatabase.addApplicationFont(str(ASSETS / "Manrope.ttf"))
+    families = QFontDatabase.applicationFontFamilies(fid) if fid >= 0 else []
+    if families:
+        f = QFont(families[0])
+        f.setPixelSize(13)
+        f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+        app.setFont(f)
+
+
 def apply(app: QApplication) -> None:
     app.setStyle(QStyleFactory.create("Fusion"))
+    load_font(app)
     pal = QPalette()
     for role, color in ((QPalette.ColorRole.Window, BG), (QPalette.ColorRole.Base, "#ffffff"),
                         (QPalette.ColorRole.AlternateBase, "#f7f9fc"), (QPalette.ColorRole.Text, TEXT),
@@ -176,7 +192,8 @@ def apply(app: QApplication) -> None:
                         (QPalette.ColorRole.ButtonText, TEXT), (QPalette.ColorRole.Highlight, ACCENT),
                         (QPalette.ColorRole.HighlightedText, "#ffffff"),
                         (QPalette.ColorRole.PlaceholderText, "#9aa2b1"),
-                        (QPalette.ColorRole.ToolTipBase, "#ffffff"), (QPalette.ColorRole.ToolTipText, TEXT)):
+                        (QPalette.ColorRole.ToolTipBase, "#ffffff"), (QPalette.ColorRole.ToolTipText, TEXT),
+                        (QPalette.ColorRole.Link, ACCENT), (QPalette.ColorRole.LinkVisited, ACCENT_HOVER)):
         pal.setColor(role, QColor(color))
     app.setPalette(pal)
     app.setStyleSheet(QSS.replace("{ICONS}", _icon_dir()))

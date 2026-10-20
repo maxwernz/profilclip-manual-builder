@@ -22,7 +22,7 @@ import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPoint, QSettings, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox,
                                QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
@@ -39,7 +39,8 @@ from .flow import FlowLayout
 from .icons import icon, pixmap, slot_style
 from .import_dialog import ImportDialog
 from .module_dialog import ModuleDialog
-from .style import ACCENT, ERROR, MUTED, OK, WARN
+from .. import __version__
+from .style import ACCENT, ASSETS, ERROR, MUTED, OK, WARN
 
 LANG_LABELS = {"de": "Deutsch", "en": "English", "it": "Italiano", "fr": "Français", "es": "Español"}
 MAIN_VARIABLES = [("Maschinentyp", "Maschinentyp"), ("Kunde", "Kunde"),
@@ -111,6 +112,32 @@ class ElidedLabel(QLabel):
             shown = "\n".join(lines)
         super().setText(shown)
         self.setToolTip(self._full if shown.replace("\n", " ") != self._full else "")
+
+
+class LogoLabel(QLabel):
+    """Profil-Clip logo, scaled sharply to the available width."""
+
+    def __init__(self, max_width: int = 230):
+        super().__init__()
+        self._src = QPixmap(str(ASSETS / "logo.png"))
+        self._max = max_width
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setToolTip("Profi L-Clip GmbH · Verpackungstechnik")
+        self._apply(max_width)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._apply(self.width())
+
+    def _apply(self, width: int) -> None:
+        if self._src.isNull():
+            return
+        w = max(60, min(width, self._max))
+        dpr = self.devicePixelRatioF() or 1.0
+        pm = self._src.scaledToWidth(int(w * dpr), Qt.TransformationMode.SmoothTransformation)
+        pm.setDevicePixelRatio(dpr)
+        self.setPixmap(pm)
+        self.setFixedHeight(int(pm.height() / dpr))
 
 
 def icon_label(name: str, color: str, size: int = 18) -> QLabel:
@@ -343,15 +370,13 @@ class MachinesPanel(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 18, 12, 12)
         lay.setSpacing(6)
-        brand = QHBoxLayout()
-        brand.addWidget(badge("layers", ACCENT, 34, 20))
-        col = QVBoxLayout()
-        col.setSpacing(0)
-        col.addWidget(ElidedLabel("Anleitungs-Baukasten", "appName"))
-        col.addWidget(ElidedLabel("Profil-Clip", "appSub"))
-        brand.addLayout(col, 1)
-        lay.addLayout(brand)
-        lay.addSpacing(16)
+        lay.addWidget(LogoLabel())
+        app_row = QHBoxLayout()
+        app_row.setContentsMargins(4, 2, 0, 0)
+        app_row.addWidget(icon_label("layers", ACCENT, 16))
+        app_row.addWidget(ElidedLabel("Anleitungs-Baukasten", "appName"), 1)
+        lay.addLayout(app_row)
+        lay.addSpacing(14)
         head = QHBoxLayout()
         head.addWidget(label("MASCHINEN", "panelCaption"), 1)
         head.addWidget(icon_button("plus", "Neue Maschine anlegen", self.new_machine, ACCENT))
@@ -372,6 +397,7 @@ class MachinesPanel(QFrame):
         sc.setWidget(host)
         lay.addWidget(sc, 1)
         lay.addWidget(text_button("Einstellungen", "settings", "flat", lambda: SettingsDialog(win).exec()))
+        lay.addWidget(text_button("Info && Kontakt", "info", "flat", lambda: AboutDialog(win).exec()))
 
     def refresh(self, current: Path | None = None) -> None:
         if current is None and self.win.workspace.machine is not None:
@@ -695,7 +721,7 @@ class ChapterTile(DraggableTile):
             row.addWidget(w)
         expanded = module.id in ws.expanded
         self.expand_btn = icon_button("chevron-down" if expanded else "chevron-right",
-                                      "Gliederung anzeigen", self.toggle, "#6b7385")
+                                      "Gliederung anzeigen", self.toggle, "#6c6c6c")
         self.expand_btn.setEnabled(bool(entries))
         row.addWidget(self.expand_btn)
         row.addWidget(icon_button("x", "Aus der Anleitung entfernen",
@@ -716,7 +742,7 @@ class ChapterTile(DraggableTile):
     def toggle(self) -> None:
         vis = not self.details.isVisible()
         self.details.setVisible(vis)
-        self.expand_btn.setIcon(icon("chevron-down" if vis else "chevron-right", "#6b7385"))
+        self.expand_btn.setIcon(icon("chevron-down" if vis else "chevron-right", "#6c6c6c"))
         (self.ws.expanded.add if vis else self.ws.expanded.discard)(self.module.id)
 
     def drag_payload(self) -> str:
@@ -853,10 +879,19 @@ class ManualPanel(QFrame):
         for i, (key, text) in enumerate(MAIN_VARIABLES):
             r, c = divmod(i, 2)
             dl.addWidget(label(text, "fieldLabel"), r * 2, c)
-            e = QLineEdit()
+            if key == "Maschinentyp":   # suggestions = product range of profil-clip.de
+                field = QComboBox()
+                field.setEditable(True)
+                field.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+                field.addItems(ws.win.lib.config.get("machine_types") or [])
+                field.setCurrentIndex(-1)
+                field.textActivated.connect(ws.vars_changed)
+                e = field.lineEdit()
+            else:
+                field = e = QLineEdit()
             e.textEdited.connect(ws.vars_changed)
             self.var_edits[key] = e
-            dl.addWidget(e, r * 2 + 1, c)
+            dl.addWidget(field, r * 2 + 1, c)
         more = text_button("Alle Maschinendaten …", "edit", "flat", ws.edit_all_vars)
         dl.addWidget(more, 4, 0, 1, 2, Qt.AlignmentFlag.AlignLeft)
         lay.addWidget(data)
@@ -1349,6 +1384,54 @@ class SettingsDialog(QDialog):
         else:
             self.win.workspace.refresh()
         self.accept()
+
+
+# ---------------------------------------------------------------- about / contact
+
+class AboutDialog(QDialog):
+    def __init__(self, win: "MainWindow"):
+        super().__init__(win)
+        self.setWindowTitle("Info & Kontakt")
+        self.setMinimumWidth(520)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        sheet = QFrame()
+        sheet.setObjectName("aboutSheet")
+        outer.addWidget(sheet)
+        lay = QVBoxLayout(sheet)
+        lay.setContentsMargins(28, 24, 28, 20)
+        lay.setSpacing(10)
+        logo = LogoLabel(300)
+        lay.addWidget(logo)
+        lay.addSpacing(6)
+        lay.addWidget(label("Anleitungs-Baukasten", "title"))
+        lay.addWidget(label(f"Version {__version__} · Betriebsanleitungen aus Bausteinen zusammenstellen",
+                            "subtitle", wrap=True))
+        lay.addSpacing(8)
+        v = win.lib.default_variables("de")
+        box = QFrame()
+        box.setObjectName("subCard")
+        bl = QGridLayout(box)
+        bl.setContentsMargins(16, 12, 16, 12)
+        bl.setHorizontalSpacing(12)
+        bl.setVerticalSpacing(8)
+        rows = [("machine", v.get("Hersteller", "Profi L-Clip GmbH")),
+                ("folder", v.get("Herstelleranschrift", "")),
+                ("phone", f"Tel. {v.get('Telefon', '')}   ·   Fax {v.get('Fax', '')}"),
+                ("mail", f"<a href='mailto:{v.get('E-Mail', '')}'>{v.get('E-Mail', '')}</a>"),
+                ("globe", f"<a href='https://{v.get('Web', '')}'>{v.get('Web', '')}</a>")]
+        for r, (ic, text) in enumerate(rows):
+            bl.addWidget(icon_label(ic, ACCENT, 16), r, 0)
+            lbl = label(text, None, wrap=True)
+            lbl.setOpenExternalLinks(True)
+            bl.addWidget(lbl, r, 1)
+        bl.setColumnStretch(1, 1)
+        lay.addWidget(box)
+        lay.addWidget(label(f"Bibliothek: {win.lib.root}", "hint", wrap=True))
+        lay.addWidget(label("Schrift Manrope (SIL Open Font License) · Qt for Python (LGPL)", "hint", wrap=True))
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
 
 
 # ---------------------------------------------------------------- window

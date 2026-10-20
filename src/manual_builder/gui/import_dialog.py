@@ -74,8 +74,8 @@ class DropZone(QLabel):
         self._style(False)
 
     def _style(self, active: bool) -> None:
-        color = "#1f5fad" if active else "#c3cbd8"
-        bg = "#eef4fc" if active else "#fafbfd"
+        color = "#0160b2" if active else "#c3cbd8"
+        bg = "#ebf3fb" if active else "#fafbfd"
         self.setStyleSheet(f"QLabel{{border:2px dashed {color};border-radius:10px;background:{bg};padding:10px;}}")
 
     def mouseReleaseEvent(self, e):

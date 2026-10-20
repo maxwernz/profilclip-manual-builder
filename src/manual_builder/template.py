@@ -16,7 +16,7 @@ from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Cm, Pt, RGBColor
 
 from . import ooxml
 from .tables import make_table
@@ -190,8 +190,15 @@ def create_master_template(source_docx: Path, out: Path, font: str = "Arial") ->
     num_id = _add_heading_numbering(doc, style_ids)
     _style_headings(doc, style_ids, num_id, font)
 
-    # cover page
-    for _ in range(6):
+    # cover page: logo, title, machine data, manufacturer
+    for _ in range(2):
+        _append(doc, ooxml.make_paragraph(""))
+    logo = Path(__file__).resolve().parent / "gui" / "assets" / "logo.png"
+    if logo.exists():
+        para = doc.add_paragraph()          # python-docx inserts before the section properties
+        para.alignment = 1                  # center
+        para.add_run().add_picture(str(logo), width=Cm(10))
+    for _ in range(3):
         _append(doc, ooxml.make_paragraph(""))
     _append(doc, ooxml.make_paragraph("{{Dokumentart}}", size_half_points=28, align="center"))
     _append(doc, ooxml.make_paragraph(""))
@@ -199,7 +206,7 @@ def create_master_template(source_docx: Path, out: Path, font: str = "Arial") ->
                                       align="center"))
     _append(doc, ooxml.make_paragraph("{{Maschinentyp}}", bold=True, size_half_points=56,
                                       align="center"))
-    for _ in range(8):
+    for _ in range(5):
         _append(doc, ooxml.make_paragraph(""))
     rows = [["{{L:customer}}", "{{Kunde}}"],
             ["{{L:serial}}", "{{Seriennummer}}"],
@@ -207,6 +214,15 @@ def create_master_template(source_docx: Path, out: Path, font: str = "Arial") ->
             ["{{L:document_no}}", "{{Dokumentnummer}}"],
             ["{{L:issue}}", "{{Ausgabe}}"]]
     _append(doc, make_table(["{{L:machine_data}}", ""], rows, [5.5, 9.5], font_size_pt=11))
+
+    # manufacturer block (required on the title page of an operating manual)
+    for _ in range(3):
+        _append(doc, ooxml.make_paragraph(""))
+    _append(doc, ooxml.make_paragraph("{{L:manufacturer}}", size_half_points=18))
+    _append(doc, ooxml.make_paragraph("{{Hersteller}}", bold=True, size_half_points=22))
+    _append(doc, ooxml.make_paragraph("{{Herstelleranschrift}}", size_half_points=20))
+    _append(doc, ooxml.make_paragraph("Tel. {{Telefon}}  ·  Fax {{Fax}}", size_half_points=20))
+    _append(doc, ooxml.make_paragraph("{{E-Mail}}  ·  {{Web}}", size_half_points=20))
 
     # table of contents on its own page
     _append(doc, ooxml.make_paragraph("{{L:contents}}", bold=True, size_half_points=32,
