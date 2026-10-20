@@ -81,9 +81,9 @@ def main() -> None:
 
     assets = []
     for d in args.release_dirs:
-        for f in sorted(d.glob("asset-*.json")):
+        for f in sorted(d.rglob("asset-*.json")):        # also in sub-folders (CI artifacts)
             info = json.loads(f.read_text(encoding="utf-8"))
-            info["_src"] = d / info["file"]
+            info["_src"] = f.parent / info["file"]
             if not info["_src"].exists() or sha256(info["_src"]) != info["sha256"]:
                 sys.exit(f"{info['file']} fehlt oder passt nicht zur Prüfsumme")
             assets.append(info)

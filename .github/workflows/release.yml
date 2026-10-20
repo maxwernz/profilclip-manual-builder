@@ -97,4 +97,4 @@ jobs:
           VERSION=$(python3 -c "import json;print(json.load(open('out/latest.json'))['version'])")
           python3 -c "import json;print(json.load(open('out/latest.json'))['notes'])" > notes.md
           gh release create "v$VERSION" --title "Anleitungs-Baukasten $VERSION" --notes-file notes.md \
-            out/* dl/*.dmg dl/asset-*.json
+            out/* $(find dl -name '*.dmg') $(find dl -name 'asset-*.json')
