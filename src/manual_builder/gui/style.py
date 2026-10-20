@@ -94,6 +94,37 @@ QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
 QScrollBar::handle:horizontal {{ background: #c9d0db; border-radius: 3px; min-width: 30px; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+#page {{ background: {BG}; }}
+#panel {{ background: #ffffff; border: 1px solid {BORDER}; border-radius: 14px; }}
+#panel[dropTarget="true"] {{ border: 2px dashed {ERROR}; background: #fff7f7; }}
+#panelTitle {{ font-size: 16px; font-weight: 650; }}
+#panelCaption {{ color: {MUTED}; font-size: 11px; font-weight: 700; letter-spacing: 1px; }}
+#subCard {{ background: #f8fafc; border: 1px solid {BORDER}; border-radius: 10px; }}
+#fieldLabel {{ color: {MUTED}; font-size: 11px; }}
+
+#machineItem {{ border-radius: 10px; border: 1px solid transparent; }}
+#machineItem:hover {{ background: #f3f6fa; }}
+#machineItem[selected="true"] {{ background: #e9f0fb; border-color: #c9daf2; }}
+#machineName {{ font-weight: 600; }}
+
+#tile {{ background: #ffffff; border: 1px solid {BORDER}; border-radius: 12px; }}
+#tile:hover {{ border-color: {ACCENT}; background: #fbfdff; }}
+#tile[used="true"] {{ background: #f6faf7; border-color: #bfe0cc; }}
+#tileTitle {{ font-weight: 650; font-size: 13px; }}
+#chapterTile {{ background: #ffffff; border: 1px solid {BORDER}; border-radius: 10px; }}
+#chapterTile:hover {{ border-color: {ACCENT}; }}
+#chapterNo {{ color: {ACCENT}; font-weight: 700; font-size: 15px; }}
+#outlineText {{ font-size: 12px; color: #3b4456; }}
+#dropIndicator {{ background: {ACCENT}; border-radius: 2px; }}
+#emptyDrop {{ border: 2px dashed #c3cbd8; border-radius: 12px; color: {MUTED}; font-size: 14px;
+              background: #fafbfd; }}
+
+QToolButton#iconButton {{ border: none; border-radius: 6px; padding: 5px; background: transparent; }}
+QToolButton#iconButton:hover {{ background: #eef2f7; }}
+QToolButton#iconButton::menu-indicator {{ image: none; width: 0; }}
+QPushButton#flat {{ border: none; background: transparent; color: #3b4456; padding: 6px 8px;
+                    text-align: left; }}
+QPushButton#flat:hover {{ background: #eef2f7; }}
 QToolTip {{ background: #1d2433; color: #ffffff; border: none; padding: 6px 8px; border-radius: 6px; }}
 QMenu {{ background: #fff; border: 1px solid {BORDER}; border-radius: 8px; padding: 4px; }}
 QMenu::item {{ padding: 6px 18px; border-radius: 5px; }}

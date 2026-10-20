@@ -1,11 +1,17 @@
-"""Main window.
+"""Main window – everything in one view:
 
-Two pages, chosen in the sidebar:
-  * Anleitungen – one card per machine; opening one shows a simple form:
-        1. Maschinendaten   2. Ausstattung (one choice per component)
-    with a live preview of the table of contents and a single "PDF erstellen" button.
-  * Bausteine   – the Word modules the manuals are made of (for whoever maintains the texts).
-Changes to a machine are saved automatically.
+    ┌──────────┬───────────────────────────────────────────────────────────┐
+    │ Maschinen│  Name of the machine · language · undo · PDF erstellen    │
+    │          ├──────────────────────────────┬────────────────────────────┤
+    │ ▸ SKT H10│  Bibliothek (tiles by group) │  Anleitung                 │
+    │   SKT H8 │  ┌────┐ ┌────┐ ┌────┐        │  Maschinendaten            │
+    │          │  │tile│ │tile│ │tile│  ──drag──▶ 1  Allgemeines      ×   │
+    │          │  └────┘ └────┘ └────┘        │  10 Clipper DCX5S      ×   │
+    │ ⚙        │                              │  status / result           │
+    └──────────┴──────────────────────────────┴────────────────────────────┘
+
+Tiles are dragged from the library into the manual, reordered there, and dragged
+back (or ×) to remove them. Changes are saved automatically; Ctrl+Z undoes.
 """
 
 from __future__ import annotations
@@ -14,30 +20,35 @@ import datetime as _dt
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QSettings, Qt, QThread, QTimer, Signal
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+from PySide6.QtCore import QMimeData, QObject, QPoint, QSettings, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QDrag, QKeySequence
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox,
                                QFileDialog, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
-                               QStackedWidget, QToolButton, QTreeWidget, QTreeWidgetItem,
-                               QVBoxLayout, QWidget)
+                               QToolButton, QVBoxLayout, QWidget)
 
 from ..build import BuildError, build_manual
 from ..engines import available_engines
-from ..library import Library, Machine, slugify
-from ..outline import outline
+from ..library import Library, Machine, Module, slugify
+from ..outline import Entry, outline
 from .common import open_path
+from .flow import FlowLayout
+from .icons import icon, pixmap, slot_style
 from .import_dialog import ImportDialog
 from .module_dialog import ModuleDialog
-from .style import ERROR, MUTED, OK, WARN
+from .style import ACCENT, ERROR, MUTED, OK, WARN
 
+MODULE_MIME = "application/x-manual-builder-module"
+CHAPTER_MIME = "application/x-manual-builder-chapter"
 LANG_LABELS = {"de": "Deutsch", "en": "English", "it": "Italiano", "fr": "Français", "es": "Español"}
-MAIN_VARIABLES = ["Maschinentyp", "Kunde", "Seriennummer", "Baujahr"]
+MAIN_VARIABLES = [("Maschinentyp", "Maschinentyp"), ("Kunde", "Kunde"),
+                  ("Seriennummer", "Seriennummer"), ("Baujahr", "Baujahr")]
 ENGINE_NAMES = {"auto": "Automatisch (empfohlen)", "word": "Microsoft Word", "libreoffice": "LibreOffice",
                 "none": "Kein PDF – nur Word-Datei"}
 
 
-# ---------------------------------------------------------------- small helpers
+# ---------------------------------------------------------------- helpers
 
 def label(text: str = "", name: str | None = None, wrap: bool = False) -> QLabel:
     lbl = QLabel(text)
@@ -47,52 +58,60 @@ def label(text: str = "", name: str | None = None, wrap: bool = False) -> QLabel
     return lbl
 
 
-def card(name: str = "card") -> tuple[QFrame, QVBoxLayout]:
-    f = QFrame()
-    f.setObjectName(name)
-    lay = QVBoxLayout(f)
-    lay.setContentsMargins(20, 18, 20, 18)
-    lay.setSpacing(12)
-    return f, lay
+def icon_label(name: str, color: str, size: int = 18) -> QLabel:
+    lbl = QLabel()
+    lbl.setPixmap(pixmap(name, color, size))
+    lbl.setFixedSize(size, size)
+    return lbl
 
 
-def button(text: str, name: str | None = None, slot=None) -> QPushButton:
-    b = QPushButton(text)
-    if name:
-        b.setObjectName(name)
+def badge(name: str, color: str, box: int = 32, size: int = 18) -> QLabel:
+    """Colored icon on a light tinted square."""
+    lbl = QLabel()
+    lbl.setPixmap(pixmap(name, color, size))
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    lbl.setFixedSize(box, box)
+    r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+    lbl.setStyleSheet(f"background:rgba({r},{g},{b},30);border-radius:8px;")
+    return lbl
+
+
+def icon_button(name: str, tip: str, slot=None, color: str = "#3b4456") -> QToolButton:
+    b = QToolButton()
+    b.setObjectName("iconButton")
+    b.setIcon(icon(name, color))
+    b.setToolTip(tip)
     b.setCursor(Qt.CursorShape.PointingHandCursor)
     if slot:
         b.clicked.connect(slot)
     return b
 
 
-def scroll(widget: QWidget) -> QScrollArea:
-    s = QScrollArea()
-    s.setWidgetResizable(True)
-    s.setFrameShape(QFrame.Shape.NoFrame)
-    s.setWidget(widget)
-    return s
+def text_button(text: str, icon_name: str | None = None, name: str | None = None, slot=None,
+                color: str = "#3b4456") -> QPushButton:
+    b = QPushButton(text)
+    if name:
+        b.setObjectName(name)
+    if icon_name:
+        b.setIcon(icon(icon_name, color))
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    if slot:
+        b.clicked.connect(slot)
+    return b
 
 
-def page_header(title: str, subtitle: str, action: QPushButton | None = None) -> QWidget:
-    w = QWidget()
-    lay = QHBoxLayout(w)
-    lay.setContentsMargins(0, 0, 0, 0)
-    col = QVBoxLayout()
-    col.setSpacing(4)
-    col.addWidget(label(title, "title"))
-    col.addWidget(label(subtitle, "subtitle", wrap=True))
-    lay.addLayout(col, 1)
-    if action:
-        lay.addWidget(action, 0, Qt.AlignmentFlag.AlignTop)
-    return w
+def repolish(w: QWidget) -> None:
+    w.style().unpolish(w)
+    w.style().polish(w)
 
 
 def clear_layout(lay) -> None:
     while lay.count():
         item = lay.takeAt(0)
-        if item.widget():
-            item.widget().deleteLater()
+        w = item.widget()
+        if w is not None:
+            w.setParent(None)
+            w.deleteLater()
         elif item.layout():
             clear_layout(item.layout())
 
@@ -104,92 +123,119 @@ def fmt_date(iso: str) -> str:
         return iso
 
 
-# ---------------------------------------------------------------- page: manuals (home)
+def start_drag(source: QWidget, mime_type: str, payload: str) -> None:
+    mime = QMimeData()
+    mime.setData(mime_type, payload.encode())
+    drag = QDrag(source)
+    drag.setMimeData(mime)
+    pm = source.grab()
+    drag.setPixmap(pm)
+    drag.setHotSpot(QPoint(min(pm.width() // 2, 40), pm.height() // 2))
+    drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction)
 
-class MachineCard(QFrame):
+
+# ---------------------------------------------------------------- machines (left)
+
+class MachineItem(QFrame):
     clicked = Signal()
 
-    def __init__(self, lib: Library, machine: Machine, on_menu):
+    def __init__(self, machine: Machine, selected: bool, menu_factory):
         super().__init__()
-        self.setObjectName("machineCard")
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setObjectName("machineItem")
+        self.setProperty("selected", selected)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(118)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 14, 12, 14)
-        top = QHBoxLayout()
-        top.addWidget(label(machine.name, "cardTitle", wrap=True), 1)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(10, 8, 6, 8)
+        lay.setSpacing(10)
+        lay.addWidget(badge("machine", ACCENT if selected else "#64748b", 30, 16))
+        col = QVBoxLayout()
+        col.setSpacing(1)
+        col.addWidget(label(machine.name, "machineName"))
+        typ = machine.variables.get("Maschinentyp", "")
+        sub = " · ".join(x for x in (typ, machine.language.upper(), f"{len(machine.modules)} Bausteine") if x)
+        col.addWidget(label(sub, "hint"))
+        lay.addLayout(col, 1)
         more = QToolButton()
-        more.setObjectName("more")
-        more.setText("⋯")
+        more.setObjectName("iconButton")
+        more.setIcon(icon("dots", "#8a93a3"))
         more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        more.setMenu(on_menu(machine))
-        top.addWidget(more, 0, Qt.AlignmentFlag.AlignTop)
-        lay.addLayout(top)
-        typ = machine.variables.get("Maschinentyp") or lib.default_variables(machine.language).get("Maschinentyp", "")
-        parts = [p for p in (typ, machine.variables.get("Kunde", ""), LANG_LABELS.get(machine.language,
-                                                                                     machine.language)) if p]
-        lay.addWidget(label(" · ".join(parts), "subtitle"))
-        lay.addStretch()
-        lay.addWidget(label(f"Zuletzt erstellt: {fmt_date(machine.last_built)}" if machine.last_built
-                            else "Noch nicht erstellt", "hint"))
+        more.setMenu(menu_factory(machine))
+        lay.addWidget(more)
 
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
-        super().mouseReleaseEvent(e)
 
 
-class HomePage(QWidget):
-    open_machine = Signal(object)
+class MachinesPanel(QFrame):
+    selected = Signal(object)
 
     def __init__(self, win: "MainWindow"):
         super().__init__()
         self.win = win
-        self.setObjectName("page")
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(36, 30, 36, 30)
-        outer.setSpacing(22)
-        outer.addWidget(page_header(
-            "Anleitungen",
-            "Jede Maschine hat eine eigene Betriebsanleitung. Öffnen Sie eine Maschine, wählen Sie ihre "
-            "Ausstattung – das Programm setzt die Anleitung aus den passenden Bausteinen zusammen.",
-            button("+  Neue Anleitung", "primary", self.new_machine)))
-        self.grid_host = QWidget()
-        self.grid = QGridLayout(self.grid_host)
-        self.grid.setContentsMargins(0, 0, 0, 0)
-        self.grid.setSpacing(16)
-        outer.addWidget(scroll(self.grid_host), 1)
+        self.setObjectName("sidebar")
+        self.setFixedWidth(250)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 18, 12, 12)
+        lay.setSpacing(6)
+        brand = QHBoxLayout()
+        brand.addWidget(badge("layers", ACCENT, 34, 20))
+        col = QVBoxLayout()
+        col.setSpacing(0)
+        col.addWidget(label("Anleitungs-Baukasten", "appName"))
+        col.addWidget(label("Profil-Clip", "appSub"))
+        brand.addLayout(col, 1)
+        lay.addLayout(brand)
+        lay.addSpacing(16)
+        head = QHBoxLayout()
+        head.addWidget(label("MASCHINEN", "panelCaption"), 1)
+        head.addWidget(icon_button("plus", "Neue Maschine anlegen", self.new_machine, ACCENT))
+        lay.addLayout(head)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Maschine suchen …")
+        self.search.addAction(icon("search", "#8a93a3"), QLineEdit.ActionPosition.LeadingPosition)
+        self.search.textChanged.connect(lambda: self.refresh())
+        lay.addWidget(self.search)
+        host = QWidget()
+        self.list = QVBoxLayout(host)
+        self.list.setContentsMargins(0, 4, 0, 4)
+        self.list.setSpacing(4)
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QFrame.Shape.NoFrame)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sc.setWidget(host)
+        lay.addWidget(sc, 1)
+        lay.addWidget(text_button("Einstellungen", "settings", "flat", lambda: SettingsDialog(win).exec()))
 
-    def refresh(self) -> None:
-        clear_layout(self.grid)
+    def refresh(self, current: Path | None = None) -> None:
+        if current is None and self.win.workspace.machine is not None:
+            current = self.win.workspace.machine.path
+        clear_layout(self.list)
+        flt = self.search.text().strip().lower()
         machines = []
         for p in self.win.lib.machines():
             try:
                 machines.append(Machine.load(p))
             except Exception:
                 continue
-        machines.sort(key=lambda m: m.last_built or "", reverse=True)
-        cols = 3
-        for i, m in enumerate(machines):
-            c = MachineCard(self.win.lib, m, self._menu)
-            c.clicked.connect(lambda m=m: self.open_machine.emit(m))
-            self.grid.addWidget(c, i // cols, i % cols)
+        machines.sort(key=lambda m: m.name.lower())
+        for m in machines:
+            if flt and flt not in (m.name + " " + " ".join(m.variables.values())).lower():
+                continue
+            it = MachineItem(m, current is not None and m.path == current, self._menu)
+            it.clicked.connect(lambda m=m: self.selected.emit(m))
+            self.list.addWidget(it)
         if not machines:
-            empty, lay = card()
-            lay.addWidget(label("Noch keine Anleitung", "cardTitle"))
-            lay.addWidget(label("Klicken Sie auf „Neue Anleitung“, um zu beginnen.", "subtitle"))
-            self.grid.addWidget(empty, 0, 0, 1, cols)
-        for c in range(cols):
-            self.grid.setColumnStretch(c, 1)
-        self.grid.setRowStretch(len(machines) // cols + 1, 1)
+            self.list.addWidget(label("Noch keine Maschine.\nMit + eine neue anlegen.", "hint", wrap=True))
+        self.list.addStretch()
 
     def _menu(self, machine: Machine) -> QMenu:
         menu = QMenu(self)
-        menu.addAction("Öffnen", lambda: self.open_machine.emit(machine))
-        menu.addAction("Duplizieren", lambda: self.duplicate(machine))
+        menu.addAction(icon("edit"), "Umbenennen …", lambda: self.rename(machine))
+        menu.addAction(icon("copy"), "Duplizieren …", lambda: self.duplicate(machine))
         menu.addSeparator()
-        menu.addAction("Löschen", lambda: self.delete(machine))
+        menu.addAction(icon("trash", ERROR), "Löschen", lambda: self.delete(machine))
         return menu
 
     def _unique_path(self, name: str) -> Path:
@@ -202,19 +248,28 @@ class HomePage(QWidget):
         return path
 
     def new_machine(self) -> None:
-        name, ok = QInputDialog.getText(self, "Neue Anleitung", "Name der Maschine (z. B. „SKT H10 Müller GmbH“):")
+        name, ok = QInputDialog.getText(self, "Neue Maschine", "Name (z. B. „SKT H10 Müller GmbH“):")
         if not ok or not name.strip():
             return
         lib = self.win.lib
         m = Machine(name=name.strip(), language=lib.default_language)
-        # sensible start: required chapters + the first variant of every single-choice component
-        for s in lib.slots:
-            mods = sorted(lib.modules_in_slot(s.id), key=lambda x: x.label())
-            if mods and (s.required or (s.max == 1 and len(mods) == 1)):
-                m.modules.append(mods[0].id)
-        m.modules = lib.sort_by_slot(m.modules)
+        m.modules = lib.sort_by_slot([mods[0].id for s in lib.slots if s.required
+                                      for mods in [lib.modules_in_slot(s.id)] if mods])
         m.save(self._unique_path(name))
-        self.open_machine.emit(m)
+        self.selected.emit(m)
+
+    def rename(self, machine: Machine) -> None:
+        name, ok = QInputDialog.getText(self, "Umbenennen", "Neuer Name:", text=machine.name)
+        if ok and name.strip():
+            ws = self.win.workspace
+            if ws.machine is not None and ws.machine.path == machine.path:
+                ws.machine.name = name.strip()
+                ws.name_edit.setText(ws.machine.name)
+                ws.machine.save()
+            else:
+                machine.name = name.strip()
+                machine.save()
+            self.refresh()
 
     def duplicate(self, machine: Machine) -> None:
         name, ok = QInputDialog.getText(self, "Duplizieren", "Name der Kopie:", text=machine.name + " (Kopie)")
@@ -223,18 +278,510 @@ class HomePage(QWidget):
         copy = Machine(name=name.strip(), language=machine.language, modules=list(machine.modules),
                        variables=dict(machine.variables))
         copy.save(self._unique_path(name))
-        self.refresh()
+        self.selected.emit(copy)
 
     def delete(self, machine: Machine) -> None:
-        if QMessageBox.question(self, "Löschen?", f"„{machine.name}“ löschen?\n\n"
-                                "Nur die Maschinen-Einstellung wird gelöscht – die Bausteine und bereits "
-                                "erstellte PDFs bleiben erhalten.") == QMessageBox.StandardButton.Yes:
-            if machine.path:
-                machine.path.unlink(missing_ok=True)
-            self.refresh()
+        if QMessageBox.question(self, "Löschen?", f"„{machine.name}“ löschen?\n\nNur die Zusammenstellung wird "
+                                "gelöscht – Bausteine und erstellte PDFs bleiben erhalten.") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        if machine.path:
+            machine.path.unlink(missing_ok=True)
+        ws = self.win.workspace
+        if ws.machine is not None and ws.machine.path == machine.path:
+            ws.load(None)
+            rest = self.win.lib.machines()
+            if rest:
+                self.selected.emit(Machine.load(rest[0]))
+                return
+        self.refresh()
 
 
-# ---------------------------------------------------------------- page: edit one manual
+# ---------------------------------------------------------------- library (middle)
+
+class LibraryTile(QFrame):
+    def __init__(self, ws: "Workspace", module: Module, used: bool):
+        super().__init__()
+        self.ws = ws
+        self.module = module
+        self._press: QPoint | None = None
+        self.setObjectName("tile")
+        self.setProperty("used", used)
+        self.setFixedSize(172, 112)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        lang = ws.lang
+        icon_name, color = slot_style(module.slot)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 10, 6, 10)
+        lay.setSpacing(6)
+        top = QHBoxLayout()
+        top.setSpacing(6)
+        top.addWidget(badge(icon_name, color))
+        top.addStretch()
+        if used:
+            ok = icon_label("check-circle", OK, 18)
+            ok.setToolTip("Ist in der Anleitung enthalten")
+            top.addWidget(ok)
+        more = QToolButton()
+        more.setObjectName("iconButton")
+        more.setIcon(icon("dots", "#8a93a3"))
+        more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        more.setMenu(ws.library.module_menu(module, self))
+        top.addWidget(more)
+        lay.addLayout(top)
+        title = label(module.label(lang), "tileTitle", wrap=True)
+        title.setFixedHeight(36)
+        title.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        lay.addWidget(title)
+        lay.addStretch()
+        have = module.languages()
+        n_f = len(module.entries("faults"))
+        meta = []
+        if have:
+            meta.append(" ".join(c.upper() for c in have))
+        else:
+            meta.append("nur Tabellen")
+        if n_f:
+            meta.append(f"{n_f} Störungen")
+        bottom = QHBoxLayout()
+        bottom.setSpacing(4)
+        bottom.addWidget(label(" · ".join(meta), "hint"))
+        bottom.addStretch()
+        if have and lang not in have:
+            warn = icon_label("globe", WARN, 14)
+            warn.setToolTip(f"Kein Text auf {LANG_LABELS.get(lang, lang)} – deutscher Text wird verwendet")
+            bottom.addWidget(warn)
+        lay.addLayout(bottom)
+        tip = [module.label(lang), f"Version {module.version}"]
+        if module.description:
+            tip.append(module.description)
+        tip.append("Ziehen oder doppelklicken zum Hinzufügen")
+        self.setToolTip("\n".join(tip))
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._press = e.position().toPoint()
+
+    def mouseMoveEvent(self, e):
+        if self._press is not None and (e.position().toPoint() - self._press).manhattanLength() \
+                >= QApplication.startDragDistance():
+            self._press = None
+            start_drag(self, MODULE_MIME, self.module.id)
+
+    def mouseReleaseEvent(self, e):
+        self._press = None
+
+    def mouseDoubleClickEvent(self, e):
+        self.ws.add_module(self.module.id)
+
+    def contextMenuEvent(self, e):
+        self.ws.library.module_menu(self.module, self).exec(e.globalPos())
+
+
+class LibraryPanel(QFrame):
+    def __init__(self, ws: "Workspace"):
+        super().__init__()
+        self.ws = ws
+        self.setObjectName("panel")
+        self.setAcceptDrops(True)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 14, 10, 12)
+        lay.setSpacing(10)
+        head = QHBoxLayout()
+        head.addWidget(icon_label("layers", ACCENT, 20))
+        head.addWidget(label("Bibliothek", "panelTitle"))
+        head.addSpacing(12)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Baustein suchen …")
+        self.search.addAction(icon("search", "#8a93a3"), QLineEdit.ActionPosition.LeadingPosition)
+        self.search.textChanged.connect(lambda: self.refresh())
+        head.addWidget(self.search, 1)
+        head.addWidget(text_button("Word-Datei hinzufügen", "upload", None, lambda: self.import_file()))
+        head.addSpacing(6)
+        lay.addLayout(head)
+        lay.addWidget(label("Bausteine in die Anleitung ziehen · Doppelklick fügt hinzu · "
+                            "zum Entfernen zurück hierher ziehen", "hint"))
+        host = QWidget()
+        self.sections = QVBoxLayout(host)
+        self.sections.setContentsMargins(0, 0, 8, 0)
+        self.sections.setSpacing(6)
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QFrame.Shape.NoFrame)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sc.setWidget(host)
+        lay.addWidget(sc, 1)
+
+    def refresh(self) -> None:
+        clear_layout(self.sections)
+        lib = self.ws.win.lib
+        lang = self.ws.lang
+        used = set(self.ws.machine.modules) if self.ws.machine else set()
+        flt = self.search.text().strip().lower()
+        for slot in lib.slots:
+            mods = [m for m in sorted(lib.modules_in_slot(slot.id), key=lambda m: m.label(lang))
+                    if not flt or flt in (m.label(lang) + " " + m.id).lower()]
+            if not mods:
+                continue
+            icon_name, color = slot_style(slot.id)
+            h = QHBoxLayout()
+            h.setContentsMargins(0, 10, 0, 2)
+            h.addWidget(icon_label(icon_name, color, 16))
+            h.addWidget(label(slot.label("de"), "sectionTitle"))
+            rule = ("eine Variante wählen" if slot.max == 1 and len(mods) > 1 else
+                    "mehrere möglich" if slot.max is None else "")
+            if slot.required:
+                rule = (rule + " · " if rule else "") + "Pflicht"
+            h.addWidget(label(rule, "hint"))
+            h.addStretch()
+            self.sections.addLayout(h)
+            box = QWidget()
+            flow = FlowLayout(box, spacing=10)
+            for m in mods:
+                flow.addWidget(LibraryTile(self.ws, m, m.id in used))
+            self.sections.addWidget(box)
+        self.sections.addStretch()
+
+    def module_menu(self, module: Module, parent: QWidget) -> QMenu:
+        menu = QMenu(parent)
+        in_manual = self.ws.machine is not None and module.id in self.ws.machine.modules
+        if in_manual:
+            menu.addAction(icon("x"), "Aus der Anleitung entfernen",
+                           lambda: self.ws.remove_index(self.ws.machine.modules.index(module.id)))
+        else:
+            menu.addAction(icon("plus", ACCENT), "Zur Anleitung hinzufügen",
+                           lambda: self.ws.add_module(module.id))
+        menu.addSeparator()
+        menu.addAction(icon("table"), "Bearbeiten (Wartung, Ersatzteile, Störungen) …",
+                       lambda: self.edit(module.id))
+        lang = self.ws.lang
+        have = module.languages()
+        if have:
+            p = module.docx_path(lang) if lang in have else module.docx_path(have[0])
+            menu.addAction(icon("word"), f"In Word öffnen ({p.stem.upper()})", lambda: open_path(p))
+        menu.addAction(icon("upload"), "Neue Fassung / Übersetzung hochladen …",
+                       lambda: self.import_file(module.id))
+        menu.addAction(icon("folder"), "Ordner öffnen", lambda: open_path(module.path))
+        return menu
+
+    def edit(self, mid: str) -> None:
+        dlg = ModuleDialog(self.ws.win.lib, self.ws.win.lib.modules[mid], self, lang=self.ws.lang)
+        dlg.exec()
+        self.ws.reload_library()
+
+    def import_file(self, module_id: str | None = None) -> None:
+        dlg = ImportDialog(self.ws.win.lib, self, module_id=module_id)
+        if dlg.exec():
+            self.ws.reload_library()
+
+    # dropping a chapter back on the library removes it
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasFormat(CHAPTER_MIME):
+            e.acceptProposedAction()
+            self.setProperty("dropTarget", True)
+            repolish(self)
+
+    def dragLeaveEvent(self, e):
+        self.setProperty("dropTarget", False)
+        repolish(self)
+
+    def dropEvent(self, e):
+        self.setProperty("dropTarget", False)
+        repolish(self)
+        idx = int(bytes(e.mimeData().data(CHAPTER_MIME)).decode())
+        self.ws.remove_index(idx)
+        e.acceptProposedAction()
+
+
+# ---------------------------------------------------------------- manual (right)
+
+class ChapterTile(QFrame):
+    def __init__(self, ws: "Workspace", index: int, module: Module, entries: list[Entry]):
+        super().__init__()
+        self.ws = ws
+        self.index = index
+        self.module = module
+        self._press: QPoint | None = None
+        self.setObjectName("chapterTile")
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        lang = ws.lang
+        icon_name, color = slot_style(module.slot)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(6, 6, 6, 6)
+        outer.setSpacing(4)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(icon_label("grip", "#b3bac6", 16))
+        nums = [e.number for e in entries]
+        num = label(nums[0] if len(nums) == 1 else (f"{nums[0]}–{nums[-1]}" if nums else "–"), "chapterNo")
+        num.setFixedWidth(44)
+        num.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        row.addWidget(num)
+        row.addWidget(badge(icon_name, color, 30, 17))
+        col = QVBoxLayout()
+        col.setSpacing(1)
+        title = label(module.label(lang), "tileTitle")
+        title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        col.addWidget(title)
+        subs = sum(len(e.children) for e in entries)
+        slot = ws.win.lib.slot(module.slot)
+        bits = [slot.label("de") if slot else module.slot]
+        if len(entries) > 1:
+            bits.append(f"{len(entries)} Kapitel")
+        if subs:
+            bits.append(f"{subs} Abschnitte")
+        n_f = len(module.entries("faults"))
+        if n_f:
+            bits.append(f"{n_f} Störungen")
+        sub = label(" · ".join(bits), "hint")
+        sub.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        sub.setToolTip(" · ".join(bits))
+        col.addWidget(sub)
+        row.addLayout(col, 1)
+        if module.has_text() and lang not in module.languages():
+            w = icon_label("globe", WARN, 16)
+            w.setToolTip(f"Kein Text auf {LANG_LABELS.get(lang, lang)} – deutscher Text wird verwendet")
+            row.addWidget(w)
+        expanded = module.id in ws.expanded
+        self.expand_btn = icon_button("chevron-down" if expanded else "chevron-right",
+                                      "Gliederung anzeigen", self.toggle, "#6b7385")
+        self.expand_btn.setEnabled(bool(entries))
+        row.addWidget(self.expand_btn)
+        row.addWidget(icon_button("x", "Aus der Anleitung entfernen",
+                                  lambda: ws.remove_index(self.index), "#8a93a3"))
+        outer.addLayout(row)
+        self.details = label("", "outlineText", wrap=True)
+        lines = []
+        for e in entries:
+            if len(entries) > 1:
+                lines.append(f"<b>{e.number}&nbsp;&nbsp;{e.text}</b>")
+            lines += [f"<span style='color:{MUTED}'>{c.number}</span>&nbsp;&nbsp;{c.text}" for c in e.children]
+        self.details.setText("<br>".join(lines) or f"<span style='color:{MUTED}'>keine Unterkapitel</span>")
+        self.details.setContentsMargins(78, 0, 8, 6)
+        self.details.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.details.setVisible(expanded)
+        outer.addWidget(self.details)
+
+    def toggle(self) -> None:
+        vis = not self.details.isVisible()
+        self.details.setVisible(vis)
+        self.expand_btn.setIcon(icon("chevron-down" if vis else "chevron-right", "#6b7385"))
+        (self.ws.expanded.add if vis else self.ws.expanded.discard)(self.module.id)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._press = e.position().toPoint()
+
+    def mouseMoveEvent(self, e):
+        if self._press is not None and (e.position().toPoint() - self._press).manhattanLength() \
+                >= QApplication.startDragDistance():
+            self._press = None
+            start_drag(self, CHAPTER_MIME, str(self.index))
+
+    def mouseReleaseEvent(self, e):
+        self._press = None
+
+    def mouseDoubleClickEvent(self, e):
+        self.toggle()
+
+    def contextMenuEvent(self, e):
+        self.ws.library.module_menu(self.module, self).exec(e.globalPos())
+
+
+class ChapterList(QWidget):
+    """Vertical list of chapter tiles; drop target for library tiles and for reordering."""
+
+    def __init__(self, ws: "Workspace"):
+        super().__init__()
+        self.ws = ws
+        self.setAcceptDrops(True)
+        self.lay = QVBoxLayout(self)
+        self.lay.setContentsMargins(0, 0, 4, 0)
+        self.lay.setSpacing(6)
+        self.tiles: list[ChapterTile] = []
+        self.indicator = QFrame()
+        self.indicator.setObjectName("dropIndicator")
+        self.indicator.setFixedHeight(4)
+        self.indicator.hide()
+        self.empty = QLabel("Bausteine aus der Bibliothek hierher ziehen")
+        self.empty.setObjectName("emptyDrop")
+        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty.setMinimumHeight(160)
+
+    def set_tiles(self, tiles: list[ChapterTile]) -> None:
+        self.indicator.setParent(None)
+        self.empty.setParent(None)
+        clear_layout(self.lay)
+        self.tiles = tiles
+        for t in tiles:
+            self.lay.addWidget(t)
+        if not tiles:
+            self.lay.addWidget(self.empty)
+            self.empty.show()
+        self.lay.addStretch()
+
+    def _index_at(self, y: int) -> int:
+        for i, t in enumerate(self.tiles):
+            if y < t.geometry().center().y():
+                return i
+        return len(self.tiles)
+
+    def _show_indicator(self, idx: int) -> None:
+        self.lay.removeWidget(self.indicator)
+        self.lay.insertWidget(idx, self.indicator)
+        self.indicator.show()
+
+    def _hide_indicator(self) -> None:
+        self.lay.removeWidget(self.indicator)
+        self.indicator.hide()
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasFormat(MODULE_MIME) or e.mimeData().hasFormat(CHAPTER_MIME):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        if e.mimeData().hasFormat(MODULE_MIME) or e.mimeData().hasFormat(CHAPTER_MIME):
+            self._show_indicator(self._index_at(int(e.position().y())))
+            e.acceptProposedAction()
+
+    def dragLeaveEvent(self, e):
+        self._hide_indicator()
+
+    def dropEvent(self, e):
+        self._hide_indicator()
+        idx = self._index_at(int(e.position().y()))
+        md = e.mimeData()
+        if md.hasFormat(MODULE_MIME):
+            self.ws.add_module(bytes(md.data(MODULE_MIME)).decode(), idx)
+        elif md.hasFormat(CHAPTER_MIME):
+            self.ws.move_index(int(bytes(md.data(CHAPTER_MIME)).decode()), idx)
+        e.acceptProposedAction()
+
+
+class VariablesDialog(QDialog):
+    def __init__(self, ws: "Workspace"):
+        super().__init__(ws)
+        self.ws = ws
+        self.setWindowTitle("Maschinendaten")
+        self.setMinimumWidth(560)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.addWidget(label("Maschinendaten", "title"))
+        lay.addWidget(label("Diese Angaben ersetzen die Platzhalter {{Name}} in Titelseite, Kopfzeile und "
+                            "Texten. Leere Felder verwenden den grauen Vorschlag.", "subtitle", wrap=True))
+        form = QFormLayout()
+        form.setVerticalSpacing(10)
+        lib = ws.win.lib
+        m = ws.machine
+        defaults = lib.default_variables(m.language)
+        labels = {v["key"]: v.get("label", v["key"]) for v in lib.variables}
+        self.edits: dict[str, QLineEdit] = {}
+        for key in [v["key"] for v in lib.variables] + [k for k in m.variables if k not in labels]:
+            e = QLineEdit(m.variables.get(key, ""))
+            e.setPlaceholderText(defaults.get(key, ""))
+            form.addRow(labels.get(key, key), e)
+            self.edits[key] = e
+        lay.addLayout(form)
+        lay.addWidget(text_button("Eigenes Feld hinzufügen", "plus", "flat", self._add), 0,
+                      Qt.AlignmentFlag.AlignLeft)
+        self.form = form
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def _add(self) -> None:
+        key, ok = QInputDialog.getText(self, "Eigenes Feld", "Name (ohne Klammern), z. B. Spannung:")
+        if ok and key.strip() and key.strip() not in self.edits:
+            e = QLineEdit()
+            self.form.addRow(key.strip(), e)
+            self.edits[key.strip()] = e
+
+    def values(self) -> dict[str, str]:
+        return {k: e.text() for k, e in self.edits.items() if e.text()}
+
+
+class ManualPanel(QFrame):
+    def __init__(self, ws: "Workspace"):
+        super().__init__()
+        self.ws = ws
+        self.setObjectName("panel")
+        self.setMinimumWidth(460)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(10)
+
+        head = QHBoxLayout()
+        head.addWidget(icon_label("file", ACCENT, 20))
+        head.addWidget(label("Anleitung", "panelTitle"))
+        self.count_label = label("", "hint")
+        head.addWidget(self.count_label)
+        head.addStretch()
+        head.addWidget(icon_button("sort", "Standard-Reihenfolge herstellen", ws.sort_standard))
+        self.undo_btn = icon_button("undo", "Rückgängig (Strg+Z)", ws.undo)
+        head.addWidget(self.undo_btn)
+        lay.addLayout(head)
+
+        # machine data (compact)
+        data = QFrame()
+        data.setObjectName("subCard")
+        dl = QGridLayout(data)
+        dl.setContentsMargins(12, 10, 12, 10)
+        dl.setHorizontalSpacing(10)
+        dl.setVerticalSpacing(4)
+        self.var_edits: dict[str, QLineEdit] = {}
+        for i, (key, text) in enumerate(MAIN_VARIABLES):
+            r, c = divmod(i, 2)
+            dl.addWidget(label(text, "fieldLabel"), r * 2, c)
+            e = QLineEdit()
+            e.textEdited.connect(ws.vars_changed)
+            self.var_edits[key] = e
+            dl.addWidget(e, r * 2 + 1, c)
+        more = text_button("Alle Maschinendaten …", "edit", "flat", ws.edit_all_vars)
+        dl.addWidget(more, 4, 0, 1, 2, Qt.AlignmentFlag.AlignLeft)
+        lay.addWidget(data)
+
+        self.chapters = ChapterList(ws)
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QFrame.Shape.NoFrame)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sc.setWidget(self.chapters)
+        lay.addWidget(sc, 1)
+
+        # status
+        self.issues = label("", None, wrap=True)
+        self.issues.setTextFormat(Qt.TextFormat.RichText)
+        lay.addWidget(self.issues)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setTextVisible(False)
+        self.progress.hide()
+        lay.addWidget(self.progress)
+        self.status = label("", "hint", wrap=True)
+        self.status.setTextFormat(Qt.TextFormat.RichText)
+        lay.addWidget(self.status)
+        res = QHBoxLayout()
+        self.open_pdf = text_button("PDF öffnen", "pdf", None, lambda: ws.open_result("pdf"), ERROR)
+        self.open_doc = text_button("Word", "word", None, lambda: ws.open_result("docx"), ACCENT)
+        self.open_dir = text_button("Ordner", "folder", None, lambda: ws.open_result("dir"))
+        self.log_btn = text_button("Protokoll", "info", "flat", self._toggle_log)
+        for b in (self.open_pdf, self.open_doc, self.open_dir, self.log_btn):
+            b.hide()
+            res.addWidget(b)
+        res.addStretch()
+        lay.addLayout(res)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumHeight(140)
+        self.log.hide()
+        lay.addWidget(self.log)
+
+    def _toggle_log(self) -> None:
+        self.log.setVisible(not self.log.isVisible())
+
+
+# ---------------------------------------------------------------- workspace
 
 class BuildWorker(QObject):
     log = Signal(str)
@@ -250,174 +797,113 @@ class BuildWorker(QObject):
         try:
             self.done.emit(build_manual(lib, machine, out_dir, pdf=pdf, engine=engine, log=self.log.emit))
         except BuildError as e:
-            self.failed.emit("\n".join(i.message for i in e.issues))
+            self.failed.emit("<br>".join(i.message for i in e.issues))
         except Exception as e:  # pragma: no cover - shown to the user
             self.log.emit(traceback.format_exc())
             self.failed.emit(str(e))
 
 
-class EditorPage(QWidget):
-    back = Signal()
-
+class Workspace(QWidget):
     def __init__(self, win: "MainWindow"):
         super().__init__()
         self.win = win
-        self.setObjectName("page")
         self.machine: Machine | None = None
+        self.history: list[list[str]] = []
+        self.expanded: set[str] = set()
         self.thread: QThread | None = None
-        self.var_edits: dict[str, QLineEdit] = {}
-        self.slot_widgets: list = []
-        self.save_timer = QTimer(self, singleShot=True, interval=400, timeout=self._save)
-        self.preview_timer = QTimer(self, singleShot=True, interval=150, timeout=self._refresh_preview)
+        self.last_result = None
+        self.save_timer = QTimer(self, singleShot=True, interval=400, timeout=self.save)
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(36, 22, 36, 26)
-        outer.setSpacing(14)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 14, 18, 16)
+        lay.setSpacing(12)
 
-        # header: back · name · language
+        # header
         head = QHBoxLayout()
-        head.addWidget(button("←  Alle Anleitungen", "link", self._go_back))
-        head.addStretch()
-        outer.addLayout(head)
-        row = QHBoxLayout()
+        head.setSpacing(10)
+        self.head_badge = badge("machine", ACCENT, 38, 22)
+        head.addWidget(self.head_badge)
+        col = QVBoxLayout()
+        col.setSpacing(0)
         self.name_edit = QLineEdit()
         self.name_edit.setObjectName("titleEdit")
-        self.name_edit.setToolTip("Name der Anleitung – zum Ändern klicken")
+        self.name_edit.setToolTip("Name der Maschine – zum Ändern klicken")
         self.name_edit.textEdited.connect(self._name_changed)
-        row.addWidget(self.name_edit, 1)
-        row.addSpacing(16)
-        row.addWidget(label("Sprache", "slotLabel"))
-        self.lang_group = QButtonGroup(self)
-        self.lang_group.setExclusive(True)
+        col.addWidget(self.name_edit)
+        self.subtitle = label("", "hint")
+        self.subtitle.setContentsMargins(8, 0, 0, 0)
+        col.addWidget(self.subtitle)
+        head.addLayout(col, 1)
+        head.addWidget(icon_label("globe", MUTED, 16))
         self.lang_row = QHBoxLayout()
         self.lang_row.setSpacing(0)
-        row.addLayout(self.lang_row)
-        outer.addLayout(row)
+        self.lang_group = QButtonGroup(self)
+        head.addLayout(self.lang_row)
+        head.addSpacing(10)
+        self.build_btn = text_button("PDF erstellen", "play", "primary", self.build, "#ffffff")
+        self.build_btn.setMinimumHeight(40)
+        head.addWidget(self.build_btn)
+        lay.addLayout(head)
 
         body = QHBoxLayout()
-        body.setSpacing(20)
-        outer.addLayout(body, 1)
+        body.setSpacing(14)
+        self.library = LibraryPanel(self)
+        self.manual = ManualPanel(self)
+        body.addWidget(self.library, 3)
+        body.addWidget(self.manual, 2)
+        lay.addLayout(body, 1)
 
-        # left column: steps
-        left = QWidget()
-        self.left_lay = QVBoxLayout(left)
-        self.left_lay.setContentsMargins(0, 0, 6, 0)
-        self.left_lay.setSpacing(16)
+        undo = QAction(self)
+        undo.setShortcut(QKeySequence.StandardKey.Undo)
+        undo.triggered.connect(self.undo)
+        self.addAction(undo)
+        build = QAction(self)
+        build.setShortcut(QKeySequence("Ctrl+B"))
+        build.triggered.connect(self.build)
+        self.addAction(build)
 
-        c1, l1 = card()
-        l1.addLayout(self._step_title("1", "Maschinendaten",
-                                      "Erscheinen auf der Titelseite und in der Kopfzeile."))
-        self.var_form = QFormLayout()
-        self.var_form.setHorizontalSpacing(18)
-        self.var_form.setVerticalSpacing(10)
-        l1.addLayout(self.var_form)
-        self.more_btn = button("Weitere Angaben anzeigen", "link", self._toggle_more)
-        l1.addWidget(self.more_btn, 0, Qt.AlignmentFlag.AlignLeft)
-        self.more_host = QWidget()
-        self.more_form = QFormLayout(self.more_host)
-        self.more_form.setContentsMargins(0, 0, 0, 0)
-        self.more_form.setHorizontalSpacing(18)
-        self.more_form.setVerticalSpacing(10)
-        self.more_host.setVisible(False)
-        l1.addWidget(self.more_host)
-        self.left_lay.addWidget(c1)
+    @property
+    def lang(self) -> str:
+        return self.machine.language if self.machine else self.win.lib.default_language
 
-        c2, l2 = card()
-        l2.addLayout(self._step_title("2", "Ausstattung",
-                                      "Wählen Sie, welche Baugruppen diese Maschine hat. "
-                                      "Nur die passenden Kapitel kommen in die Anleitung."))
-        self.slot_grid = QGridLayout()
-        self.slot_grid.setHorizontalSpacing(18)
-        self.slot_grid.setVerticalSpacing(12)
-        self.slot_grid.setColumnStretch(1, 1)
-        l2.addLayout(self.slot_grid)
-        self.left_lay.addWidget(c2)
-        self.left_lay.addStretch()
-        body.addWidget(scroll(left), 3)
-
-        # right column: preview + build
-        right = QVBoxLayout()
-        right.setSpacing(16)
-        c3, l3 = card()
-        l3.addLayout(self._step_title("3", "Inhalt der Anleitung",
-                                      "Vorschau des Inhaltsverzeichnisses. Kapitel aufklappen für Details."))
-        self.preview = QTreeWidget()
-        self.preview.setObjectName("preview")
-        self.preview.setHeaderHidden(True)
-        self.preview.setIndentation(14)
-        self.preview.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        l3.addWidget(self.preview, 1)
-        self.issue_label = label("", None, wrap=True)
-        l3.addWidget(self.issue_label)
-        right.addWidget(c3, 1)
-
-        c4, l4 = card()
-        self.build_btn = button("PDF erstellen", "primary", self.build)
-        self.build_btn.setMinimumHeight(46)
-        l4.addWidget(self.build_btn)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 0)
-        self.progress.setTextVisible(False)
-        self.progress.setVisible(False)
-        l4.addWidget(self.progress)
-        self.status = label("", "hint", wrap=True)
-        l4.addWidget(self.status)
-        self.result_row = QHBoxLayout()
-        self.open_pdf_btn = button("PDF öffnen", None, lambda: self._open("pdf"))
-        self.open_doc_btn = button("Word-Datei öffnen", None, lambda: self._open("docx"))
-        self.open_dir_btn = button("Ordner", None, lambda: self._open("dir"))
-        for b in (self.open_pdf_btn, self.open_doc_btn, self.open_dir_btn):
-            b.setVisible(False)
-            self.result_row.addWidget(b)
-        self.result_row.addStretch()
-        l4.addLayout(self.result_row)
-        self.details_btn = button("Protokoll anzeigen", "link", self._toggle_log)
-        self.details_btn.setVisible(False)
-        l4.addWidget(self.details_btn, 0, Qt.AlignmentFlag.AlignLeft)
-        self.log = QPlainTextEdit()
-        self.log.setReadOnly(True)
-        self.log.setVisible(False)
-        self.log.setMaximumHeight(160)
-        l4.addWidget(self.log)
-        right.addWidget(c4)
-        right.setContentsMargins(0, 0, 0, 0)
-        rw = QWidget()
-        rw.setLayout(right)
-        rw.setMinimumWidth(380)
-        body.addWidget(rw, 2)
-        self.last_result = None
-
-    def _step_title(self, num: str, title: str, hint: str) -> QVBoxLayout:
-        col = QVBoxLayout()
-        col.setSpacing(4)
-        row = QHBoxLayout()
-        n = label(num, "stepNumber")
-        n.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        row.addWidget(n)
-        row.addWidget(label(title, "sectionTitle"))
-        row.addStretch()
-        col.addLayout(row)
-        col.addWidget(label(hint, "hint", wrap=True))
-        return col
-
-    # ---------------------------------------------------------------- load
-    def load(self, machine: Machine) -> None:
+    # ---------------------------------------------------------------- load / save
+    def load(self, machine: Machine | None) -> None:
+        if self.machine is not None:
+            self.save_timer.stop()
+            self.save()
         self.machine = machine
+        self.history = []
         self.last_result = None
-        self.name_edit.setText(machine.name)
+        enabled = machine is not None
+        for w in (self.name_edit, self.build_btn, self.manual, self.library):
+            w.setEnabled(enabled)
+        self.name_edit.setText(machine.name if machine else "Keine Maschine gewählt")
         self._build_lang_buttons()
-        self._build_vars()
-        self._build_slots()
-        self.status.setText("")
-        self.log.clear()
-        self.log.setVisible(False)
-        self.details_btn.setVisible(False)
-        for b in (self.open_pdf_btn, self.open_doc_btn, self.open_dir_btn):
-            b.setVisible(False)
-        if machine.last_built:
-            self.status.setText(f"Zuletzt erstellt am {fmt_date(machine.last_built)}.")
-        self._refresh_preview()
+        for key, e in self.manual.var_edits.items():
+            e.setText(machine.variables.get(key, "") if machine else "")
+            e.setPlaceholderText(self.win.lib.default_variables(self.lang).get(key, ""))
+        for b in (self.manual.open_pdf, self.manual.open_doc, self.manual.open_dir, self.manual.log_btn):
+            b.hide()
+        self.manual.log.clear()
+        self.manual.log.hide()
+        self.manual.status.setText(f"Zuletzt erstellt am {fmt_date(machine.last_built)}"
+                                   if machine and machine.last_built else "")
+        if machine and machine.path:
+            self.win.settings.setValue("last_machine", str(machine.path))
+        self.refresh()
 
+    def save(self) -> None:
+        if self.machine is not None and self.machine.path is not None:
+            self.machine.save()
+
+    def _changed(self) -> None:
+        self.save_timer.start()
+
+    def reload_library(self) -> None:
+        self.win.lib.reload_modules()
+        self.refresh()
+
+    # ---------------------------------------------------------------- views
     def _build_lang_buttons(self) -> None:
         clear_layout(self.lang_row)
         for b in self.lang_group.buttons():
@@ -425,193 +911,188 @@ class EditorPage(QWidget):
         langs = self.win.lib.languages
         for i, code in enumerate(langs):
             name = "segFirst" if i == 0 else ("segLast" if i == len(langs) - 1 else "seg")
-            b = button(LANG_LABELS.get(code, code), name)
+            b = text_button(code.upper(), None, name)
+            b.setToolTip(LANG_LABELS.get(code, code))
             b.setCheckable(True)
-            b.setChecked(code == self.machine.language)
-            b.clicked.connect(lambda _=False, c=code: self._lang_changed(c))
+            b.setChecked(self.machine is not None and code == self.machine.language)
+            b.setEnabled(self.machine is not None)
+            b.clicked.connect(lambda _=False, c=code: self.set_language(c))
             self.lang_group.addButton(b)
             self.lang_row.addWidget(b)
 
-    def _build_vars(self) -> None:
-        for form in (self.var_form, self.more_form):
-            while form.rowCount():
-                form.removeRow(0)
-        self.var_edits = {}
+    def refresh(self) -> None:
+        """Re-render library tiles, chapter tiles and the status line."""
+        self.library.refresh()
         lib = self.win.lib
-        defaults = lib.default_variables(self.machine.language)
-        labels = {v["key"]: v.get("label", v["key"]) for v in lib.variables}
-        keys = [v["key"] for v in lib.variables] + [k for k in self.machine.variables
-                                                     if k not in labels]
-        for key in keys:
-            e = QLineEdit(self.machine.variables.get(key, ""))
-            e.setPlaceholderText(defaults.get(key, "") or "")
-            e.textEdited.connect(self._vars_changed)
-            self.var_edits[key] = e
-            form = self.var_form if key in MAIN_VARIABLES else self.more_form
-            form.addRow(labels.get(key, key).split(" (")[0], e)
-        add = button("+ eigenes Feld", "link", self._add_variable)
-        self.more_form.addRow("", add)
-        self.more_form.addRow(label("Leere Felder verwenden den grauen Vorschlag. In den Word-Bausteinen "
-                                    "werden die Felder als {{Name}} eingesetzt, z. B. {{Maschinentyp}}.",
-                                    "hint", wrap=True))
-
-    def _toggle_more(self) -> None:
-        vis = not self.more_host.isVisible()
-        self.more_host.setVisible(vis)
-        self.more_btn.setText("Weitere Angaben ausblenden" if vis else "Weitere Angaben anzeigen")
-
-    def _build_slots(self) -> None:
-        clear_layout(self.slot_grid)
-        self.slot_widgets = []
-        lib = self.win.lib
-        lang = self.machine.language
-        chosen = set(self.machine.modules)
-        row = 0
-        for slot in lib.slots:
-            mods = sorted(lib.modules_in_slot(slot.id), key=lambda m: m.label(lang))
-            if not mods:
-                continue
-            name = label(slot.label("de"), "slotLabel")
-            self.slot_grid.addWidget(name, row, 0, Qt.AlignmentFlag.AlignTop)
-            if slot.max is None:                          # options: tick any number
-                box = QWidget()
-                bl = QGridLayout(box)
-                bl.setContentsMargins(0, 0, 0, 0)
-                bl.setHorizontalSpacing(16)
-                checks = []
-                for i, m in enumerate(mods):
-                    cb = QCheckBox(m.label(lang).removeprefix("Option "))
-                    cb.setChecked(m.id in chosen)
-                    cb.setToolTip(m.description or m.label(lang))
-                    cb.toggled.connect(self._selection_changed)
-                    bl.addWidget(cb, i // 2, i % 2)
-                    checks.append((cb, m.id))
-                self.slot_grid.addWidget(box, row, 1)
-                self.slot_widgets.append(("checks", slot.id, checks))
-            elif slot.required and len(mods) == 1:        # always included
-                self.slot_grid.addWidget(label(f"✓  {mods[0].label(lang)}  (immer enthalten)", "fixed"), row, 1)
-                self.slot_widgets.append(("fixed", slot.id, mods[0].id))
-            elif len(mods) == 1:                          # yes / no
-                cb = QCheckBox(mods[0].label(lang))
-                cb.setChecked(mods[0].id in chosen)
-                cb.toggled.connect(self._selection_changed)
-                self.slot_grid.addWidget(cb, row, 1)
-                self.slot_widgets.append(("check", slot.id, (cb, mods[0].id)))
-            else:                                         # choose one variant
-                combo = QComboBox()
-                if not slot.required:
-                    combo.addItem("– nicht vorhanden –", "")
-                for m in mods:
-                    combo.addItem(m.label(lang), m.id)
-                current = next((m.id for m in mods if m.id in chosen), "")
-                combo.setCurrentIndex(max(0, combo.findData(current)))
-                combo.currentIndexChanged.connect(self._selection_changed)
-                combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-                self.slot_grid.addWidget(combo, row, 1)
-                self.slot_widgets.append(("combo", slot.id, combo))
-            row += 1
-
-    # ---------------------------------------------------------------- changes
-    def _selection_changed(self, *_):
-        mods = []
-        for kind, _slot, w in self.slot_widgets:
-            if kind == "fixed":
-                mods.append(w)
-            elif kind == "check":
-                if w[0].isChecked():
-                    mods.append(w[1])
-            elif kind == "checks":
-                mods += [mid for cb, mid in w if cb.isChecked()]
-            elif kind == "combo" and w.currentData():
-                mods.append(w.currentData())
-        self.machine.modules = self.win.lib.sort_by_slot(mods)
-        self._changed()
-
-    def _vars_changed(self, *_):
-        self.machine.variables = {k: e.text() for k, e in self.var_edits.items() if e.text()}
-        self._changed(preview=False)
-
-    def _add_variable(self) -> None:
-        key, ok = QInputDialog.getText(self, "Eigenes Feld", "Name des Feldes (ohne Klammern), z. B. Spannung:")
-        if ok and key.strip():
-            self.machine.variables.setdefault(key.strip(), "")
-            self._build_vars()
-            self.more_host.setVisible(True)
-            self._changed(preview=False)
-
-    def _name_changed(self, text: str) -> None:
-        self.machine.name = text.strip() or "Unbenannt"
-        self._changed(preview=False)
-
-    def _lang_changed(self, code: str) -> None:
-        self.machine.language = code
-        self._build_vars()
-        self._build_slots()
-        self._changed()
-
-    def _changed(self, preview: bool = True) -> None:
-        self.save_timer.start()
-        if preview:
-            self.preview_timer.start()
-
-    def _save(self) -> None:
-        if self.machine and self.machine.path:
-            self.machine.save()
-
-    def _go_back(self) -> None:
-        self.save_timer.stop()
-        self._save()
-        self.back.emit()
-
-    # ---------------------------------------------------------------- preview
-    def _refresh_preview(self) -> None:
-        lib = self.win.lib
-        self.preview.clear()
+        m = self.machine
+        tiles = []
+        n_chapters = 0
+        if m is not None:
+            entries = outline(lib, m)
+            by_module: dict[str, list[Entry]] = {}
+            for e in entries:
+                by_module.setdefault(e.module_id, []).append(e)
+            n_chapters = len(entries)
+            for i, mid in enumerate(m.modules):
+                mod = lib.modules.get(mid)
+                if mod is not None:
+                    tiles.append(ChapterTile(self, i, mod, by_module.get(mid, [])))
+        self.manual.chapters.set_tiles(tiles)
+        self.manual.count_label.setText(f"· {n_chapters} Kapitel" if n_chapters else "")
+        self.manual.undo_btn.setEnabled(bool(self.history))
+        typ = (m.variables.get("Maschinentyp") or lib.default_variables(self.lang).get("Maschinentyp", "")) if m else ""
+        out = Path(self.win.settings.value("output_dir", str(Path.home() / "Documents" / "Anleitungen")))
         try:
-            entries = outline(lib, self.machine)
-        except Exception as e:  # pragma: no cover
-            entries = []
-            self.issue_label.setText(f"Vorschau nicht möglich: {e}")
-        for e in entries:
-            it = QTreeWidgetItem([f"{e.number}   {e.text}"])
-            f = it.font(0)
-            f.setBold(True)
-            it.setFont(0, f)
-            for c in e.children:
-                it.addChild(QTreeWidgetItem([f"{c.number}   {c.text}"]))
-            self.preview.addTopLevelItem(it)
-        issues = [i for i in lib.validate(self.machine) if i.level != "info"
-                  and "Variable" not in i.message]
+            out_txt = "~/" + out.relative_to(Path.home()).as_posix()
+        except ValueError:
+            out_txt = str(out)
+        self.subtitle.setText(f"{typ} · {LANG_LABELS.get(self.lang, self.lang)} · PDF/Word nach {out_txt}"
+                              if m else "Links eine Maschine wählen oder mit + anlegen")
+        self._update_issues()
+
+    def _update_issues(self) -> None:
+        m = self.machine
+        if m is None:
+            self.manual.issues.setText("")
+            return
+        issues = [i for i in self.win.lib.validate(m) if i.level != "info" and "Variable" not in i.message]
         errors = [i for i in issues if i.level == "error"]
         lines = []
-        for i in issues:
-            color = ERROR if i.level == "error" else WARN
-            lines.append(f"<span style='color:{color}'>{'●' if i.level == 'error' else '▲'}</span> {i.message}")
+        for i in issues[:4]:
+            color, sym = (ERROR, "●") if i.level == "error" else (WARN, "▲")
+            lines.append(f"<span style='color:{color}'>{sym}</span> {i.message}")
+        if len(issues) > 4:
+            lines.append(f"<span style='color:{MUTED}'>… und {len(issues) - 4} weitere</span>")
         if not issues:
-            lines.append(f"<span style='color:{OK}'>✓</span> <span style='color:{MUTED}'>"
-                         f"{len(entries)} Kapitel – bereit zum Erstellen</span>")
-        self.issue_label.setText("<br>".join(lines))
+            lines.append(f"<span style='color:{OK}'>✓</span> <span style='color:{MUTED}'>Bereit zum Erstellen</span>")
+        self.manual.issues.setText("<br>".join(lines))
         self.build_btn.setEnabled(not errors and self.thread is None)
 
-    # ---------------------------------------------------------------- build
-    def _toggle_log(self) -> None:
-        self.log.setVisible(not self.log.isVisible())
-        self.details_btn.setText("Protokoll ausblenden" if self.log.isVisible() else "Protokoll anzeigen")
+    # ---------------------------------------------------------------- editing the module list
+    def _snapshot(self) -> None:
+        self.history.append(list(self.machine.modules))
+        del self.history[:-50]
 
-    def build(self) -> None:
-        if self.thread is not None or self.machine is None:
+    def _flash(self, text: str) -> None:
+        self.manual.status.setText(f"<span style='color:{MUTED}'>{text}</span>")
+
+    def add_module(self, mid: str, idx: int | None = None) -> None:
+        if self.machine is None:
             return
-        self._save()
+        lib = self.win.lib
+        mods = self.machine.modules
+        mod = lib.modules.get(mid)
+        if mod is None:
+            return
+        if mid in mods:
+            if idx is not None:
+                self.move_index(mods.index(mid), idx)
+            else:
+                self._flash(f"„{mod.label(self.lang)}“ ist schon enthalten.")
+            return
+        self._snapshot()
+        slot = lib.slot(mod.slot)
+        if slot is not None and slot.max == 1:
+            same = [x for x in mods if x in lib.modules and lib.modules[x].slot == mod.slot]
+            if same:   # only one variant allowed → replace it in place
+                pos = mods.index(same[0])
+                mods[pos] = mid
+                self._flash(f"„{lib.modules[same[0]].label(self.lang)}“ durch „{mod.label(self.lang)}“ ersetzt.")
+                self._changed()
+                self.refresh()
+                return
+        if idx is None:   # standard position
+            si = lib.slot_index(mod.slot)
+            idx = len([x for x in mods if x in lib.modules and lib.slot_index(lib.modules[x].slot) <= si])
+        mods.insert(idx, mid)
+        self._flash(f"„{mod.label(self.lang)}“ hinzugefügt.")
+        self._changed()
+        self.refresh()
+
+    def move_index(self, src: int, dst: int) -> None:
+        mods = self.machine.modules
+        if not (0 <= src < len(mods)) or dst in (src, src + 1):
+            return
+        self._snapshot()
+        mid = mods.pop(src)
+        mods.insert(dst - 1 if dst > src else dst, mid)
+        self._changed()
+        self.refresh()
+
+    def remove_index(self, i: int) -> None:
+        mods = self.machine.modules
+        if not (0 <= i < len(mods)):
+            return
+        self._snapshot()
+        mid = mods.pop(i)
+        mod = self.win.lib.modules.get(mid)
+        self._flash(f"„{mod.label(self.lang) if mod else mid}“ entfernt – Strg+Z macht es rückgängig.")
+        self._changed()
+        self.refresh()
+
+    def undo(self) -> None:
+        if self.machine is None or not self.history:
+            return
+        self.machine.modules = self.history.pop()
+        self._changed()
+        self.refresh()
+
+    def sort_standard(self) -> None:
+        if self.machine is None:
+            return
+        self._snapshot()
+        self.machine.modules = self.win.lib.sort_by_slot(self.machine.modules)
+        self._changed()
+        self.refresh()
+
+    def set_language(self, code: str) -> None:
+        self.machine.language = code
+        for key, e in self.manual.var_edits.items():
+            e.setPlaceholderText(self.win.lib.default_variables(code).get(key, ""))
+        self._changed()
+        self.refresh()
+
+    def vars_changed(self, *_):
+        for key, e in self.manual.var_edits.items():
+            if e.text():
+                self.machine.variables[key] = e.text()
+            else:
+                self.machine.variables.pop(key, None)
+        self._changed()
+
+    def edit_all_vars(self) -> None:
+        if self.machine is None:
+            return
+        dlg = VariablesDialog(self)
+        if dlg.exec():
+            self.machine.variables = dlg.values()
+            for key, e in self.manual.var_edits.items():
+                e.setText(self.machine.variables.get(key, ""))
+            self._changed()
+            self.refresh()
+
+    def _name_changed(self, text: str) -> None:
+        if self.machine is not None:
+            self.machine.name = text.strip() or "Unbenannt"
+            self._changed()
+            QTimer.singleShot(500, lambda: self.win.machines.refresh())
+
+    # ---------------------------------------------------------------- build
+    def build(self) -> None:
+        if self.thread is not None or self.machine is None or not self.build_btn.isEnabled():
+            return
+        self.save()
         settings = self.win.settings
         out_dir = Path(settings.value("output_dir", str(Path.home() / "Documents" / "Anleitungen"))).expanduser()
         engine = settings.value("engine", "auto")
-        self.log.clear()
-        for b in (self.open_pdf_btn, self.open_doc_btn, self.open_dir_btn):
-            b.setVisible(False)
+        mp = self.manual
+        mp.log.clear()
+        for b in (mp.open_pdf, mp.open_doc, mp.open_dir):
+            b.hide()
         self.build_btn.setEnabled(False)
         self.build_btn.setText("Wird erstellt …")
-        self.progress.setVisible(True)
-        self.status.setText("Bausteine werden zusammengesetzt …")
+        mp.progress.show()
+        mp.status.setText("Bausteine werden zusammengesetzt …")
         m = self.machine
         snapshot = Machine(name=m.name, language=m.language, modules=list(m.modules), variables=dict(m.variables))
         self.thread = QThread()
@@ -624,144 +1105,48 @@ class EditorPage(QWidget):
         self.thread.start()
 
     def _log(self, text: str) -> None:
-        self.log.appendPlainText(text)
+        self.manual.log.appendPlainText(text)
         if text.startswith("+ "):
-            self.status.setText(f"Füge ein: {text[2:]}")
+            self.manual.status.setText(f"Füge ein: {text[2:]}")
         elif "Inhaltsverzeichnis" in text:
-            self.status.setText("Inhaltsverzeichnis und Seitenzahlen werden berechnet …")
+            self.manual.status.setText("Inhaltsverzeichnis und Seitenzahlen werden berechnet …")
 
     def _finish(self) -> None:
         if self.thread:
             self.thread.quit()
             self.thread.wait()
         self.thread = None
-        self.progress.setVisible(False)
+        self.manual.progress.hide()
+        self.manual.log_btn.show()
         self.build_btn.setText("PDF erstellen")
-        self.details_btn.setVisible(True)
-        self._refresh_preview()
+        self._update_issues()
 
     def _done(self, res) -> None:
         self._finish()
         self.last_result = res
         self.machine.last_built = _dt.datetime.now().isoformat(timespec="minutes")
-        self._save()
+        self.save()
         for i in res.issues:
-            self.log.appendPlainText(str(i))
+            self.manual.log.appendPlainText(str(i))
         warn = [i for i in res.issues if i.level == "warning"]
         name = res.pdf.name if res.pdf else res.docx.name
-        self.status.setText(f"<span style='color:{OK}'>✓ Fertig:</span> {name}"
-                            + (f"<br><span style='color:{MUTED}'>{len(warn)} Hinweise im Protokoll</span>"
-                               if warn else ""))
-        self.open_pdf_btn.setVisible(res.pdf is not None)
-        self.open_doc_btn.setVisible(True)
-        self.open_dir_btn.setVisible(True)
-        if res.pdf:
-            open_path(res.pdf)
+        self.manual.status.setText(f"<span style='color:{OK}'>✓ Fertig:</span> {name}"
+                                   + (f" <span style='color:{MUTED}'>· {len(warn)} Hinweise im Protokoll</span>"
+                                      if warn else ""))
+        self.manual.open_pdf.setVisible(res.pdf is not None)
+        self.manual.open_doc.show()
+        self.manual.open_dir.show()
+        self.win.machines.refresh()
 
     def _failed(self, msg: str) -> None:
         self._finish()
-        self.status.setText(f"<span style='color:{ERROR}'>Fehler:</span> {msg}")
-        self.log.setVisible(True)
+        self.manual.status.setText(f"<span style='color:{ERROR}'>Fehler:</span> {msg}")
+        self.manual.log.show()
 
-    def _open(self, what: str) -> None:
+    def open_result(self, what: str) -> None:
         r = self.last_result
-        if not r:
-            return
-        open_path(r.pdf if what == "pdf" else r.docx if what == "docx" else r.docx.parent)
-
-
-# ---------------------------------------------------------------- page: building blocks
-
-class ModulesPage(QWidget):
-    def __init__(self, win: "MainWindow"):
-        super().__init__()
-        self.win = win
-        self.setObjectName("page")
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(36, 30, 36, 30)
-        outer.setSpacing(22)
-        outer.addWidget(page_header(
-            "Bausteine",
-            "Aus diesen Bausteinen werden die Anleitungen zusammengesetzt. Jeder Baustein ist eine "
-            "Word-Datei (je Sprache) plus Tabellen für Wartung, Ersatzteile und Störungen. "
-            "Ändern Sie hier einen Baustein, ist er beim nächsten Erstellen in allen Anleitungen aktuell.",
-            button("+  Word-Datei hinzufügen", "primary", lambda: self.import_file())))
-        self.host = QWidget()
-        self.list_lay = QVBoxLayout(self.host)
-        self.list_lay.setContentsMargins(0, 0, 0, 0)
-        self.list_lay.setSpacing(8)
-        outer.addWidget(scroll(self.host), 1)
-
-    def refresh(self) -> None:
-        clear_layout(self.list_lay)
-        lib = self.win.lib
-        lib.reload_modules()
-        for slot in lib.slots:
-            mods = sorted(lib.modules_in_slot(slot.id), key=lambda m: m.label())
-            if not mods:
-                continue
-            h = label(slot.label("de"), "sectionTitle")
-            h.setContentsMargins(4, 10, 0, 2)
-            self.list_lay.addWidget(h)
-            for m in mods:
-                self.list_lay.addWidget(self._row(m))
-        self.list_lay.addStretch()
-
-    def _row(self, m) -> QFrame:
-        lib = self.win.lib
-        f = QFrame()
-        f.setObjectName("moduleRow")
-        lay = QHBoxLayout(f)
-        lay.setContentsMargins(16, 10, 10, 10)
-        col = QVBoxLayout()
-        col.setSpacing(4)
-        top = QHBoxLayout()
-        top.setSpacing(6)
-        top.addWidget(label(m.label(), "cardTitle"))
-        have = m.languages()
-        for code in lib.languages:
-            if code in have:
-                top.addWidget(label(code.upper(), "chip"))
-            elif have:
-                c = label(code.upper() + " fehlt", "chipMissing")
-                top.addWidget(c)
-        top.addStretch()
-        col.addLayout(top)
-        n = {s: len(m.entries(s)) for s in ("maintenance", "spare_parts", "faults")}
-        bits = []
-        if not have:
-            bits.append("nur Tabellen, noch kein Text")
-        for key, word in (("faults", "Störungen"), ("maintenance", "Wartungspunkte"), ("spare_parts", "Ersatzteile")):
-            if n[key]:
-                bits.append(f"{n[key]} {word}")
-        last = m.history[-1] if m.history else {}
-        bits.append(f"Stand {_dt.date.fromisoformat(last['date']).strftime('%d.%m.%Y')}" if last.get("date") else "")
-        col.addWidget(label(" · ".join(b for b in bits if b), "hint"))
-        lay.addLayout(col, 1)
-        if have:
-            p = m.docx_path("de") if "de" in have else m.docx_path(have[0])
-            lay.addWidget(button("In Word öffnen", None, lambda _=False, p=p: open_path(p)))
-        lay.addWidget(button("Bearbeiten", None, lambda _=False, mid=m.id: self.edit(mid)))
-        more = QToolButton()
-        more.setObjectName("more")
-        more.setText("⋯")
-        more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        menu = QMenu(more)
-        menu.addAction("Neue Fassung oder Übersetzung hochladen …", lambda mid=m.id: self.import_file(mid))
-        menu.addAction("Ordner öffnen", lambda p=m.path: open_path(p))
-        more.setMenu(menu)
-        lay.addWidget(more)
-        return f
-
-    def edit(self, mid: str) -> None:
-        dlg = ModuleDialog(self.win.lib, self.win.lib.modules[mid], self)
-        dlg.exec()
-        self.refresh()
-
-    def import_file(self, module_id: str | None = None) -> None:
-        dlg = ImportDialog(self.win.lib, self, module_id=module_id)
-        if dlg.exec():
-            self.refresh()
+        if r:
+            open_path(r.pdf if what == "pdf" else r.docx if what == "docx" else r.docx.parent)
 
 
 # ---------------------------------------------------------------- settings
@@ -771,38 +1156,34 @@ class SettingsDialog(QDialog):
         super().__init__(win)
         self.win = win
         self.setWindowTitle("Einstellungen")
-        self.setMinimumWidth(620)
+        self.setMinimumWidth(640)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
         lay.addWidget(label("Einstellungen", "title"))
         form = QFormLayout()
-        form.setVerticalSpacing(14)
+        form.setVerticalSpacing(12)
         form.setHorizontalSpacing(16)
-
         self.lib_edit = QLineEdit(str(win.lib.root))
         self.lib_edit.setReadOnly(True)
         r1 = QHBoxLayout()
         r1.addWidget(self.lib_edit)
-        r1.addWidget(button("Ändern …", None, self._choose_lib))
-        form.addRow("Bausteine-Ordner:", r1)
-        form.addRow("", label("Hier liegen alle Bausteine und Maschinen. Für mehrere Benutzer auf ein "
+        r1.addWidget(text_button("Ändern …", "folder", None, self._choose_lib))
+        form.addRow("Bibliothek:", r1)
+        form.addRow("", label("Ordner mit allen Bausteinen und Maschinen. Für mehrere Benutzer auf ein "
                               "Netzlaufwerk legen.", "hint", wrap=True))
-
         self.out_edit = QLineEdit(win.settings.value("output_dir", str(Path.home() / "Documents" / "Anleitungen")))
         r2 = QHBoxLayout()
         r2.addWidget(self.out_edit)
-        r2.addWidget(button("Ändern …", None, self._choose_out))
+        r2.addWidget(text_button("Ändern …", "folder", None, self._choose_out))
         form.addRow("Fertige Anleitungen:", r2)
-
         self.engine = QComboBox()
         for e in ["auto"] + available_engines():
             self.engine.addItem(ENGINE_NAMES[e], e)
         self.engine.setCurrentIndex(max(0, self.engine.findData(win.settings.value("engine", "auto"))))
         form.addRow("Seitenzahlen & PDF mit:", self.engine)
-        form.addRow("", label("Für Inhaltsverzeichnis, Seitenzahlen und PDF wird Microsoft Word oder "
-                              "LibreOffice benötigt. „Automatisch“ nimmt Word, falls vorhanden.",
-                              "hint", wrap=True))
+        form.addRow("", label("Inhaltsverzeichnis, Seitenzahlen und PDF erzeugt Microsoft Word oder LibreOffice. "
+                              "„Automatisch“ nimmt Word, falls vorhanden.", "hint", wrap=True))
         lay.addLayout(form)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self._ok)
@@ -811,15 +1192,14 @@ class SettingsDialog(QDialog):
         self.new_lib: Library | None = None
 
     def _choose_lib(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "Bausteine-Ordner wählen", self.lib_edit.text())
+        d = QFileDialog.getExistingDirectory(self, "Bibliothek wählen", self.lib_edit.text())
         if not d:
             return
         try:
             self.new_lib = Library(Path(d))
             self.lib_edit.setText(d)
         except FileNotFoundError:
-            QMessageBox.warning(self, "Kein Bausteine-Ordner",
-                                "In diesem Ordner gibt es keine library.yaml.")
+            QMessageBox.warning(self, "Keine Bibliothek", "In diesem Ordner gibt es keine library.yaml.")
 
     def _choose_out(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Ordner für fertige Anleitungen", self.out_edit.text())
@@ -833,6 +1213,8 @@ class SettingsDialog(QDialog):
         if self.new_lib is not None:
             s.setValue("library", str(self.new_lib.root))
             self.win.set_library(self.new_lib)
+        else:
+            self.win.workspace.refresh()
         self.accept()
 
 
@@ -844,81 +1226,42 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("ProfilClip", "ManualBuilder")
         self.lib = lib
         self.setWindowTitle("Anleitungs-Baukasten")
-        self.resize(1320, 840)
-        self.setMinimumSize(1050, 680)
-
+        self.resize(1480, 900)
+        self.setMinimumSize(1180, 700)
         root = QWidget()
+        root.setObjectName("page")
         rl = QHBoxLayout(root)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(0)
-
-        side = QFrame()
-        side.setObjectName("sidebar")
-        side.setFixedWidth(220)
-        sl = QVBoxLayout(side)
-        sl.setContentsMargins(14, 22, 14, 16)
-        sl.setSpacing(4)
-        sl.addWidget(label("Anleitungs-Baukasten", "appName"))
-        sl.addWidget(label("Profil-Clip Betriebsanleitungen", "appSub"))
-        sl.addSpacing(22)
-        self.nav = QButtonGroup(self)
-        self.nav_manuals = self._nav_button("Anleitungen", sl)
-        self.nav_modules = self._nav_button("Bausteine", sl)
-        sl.addStretch()
-        settings_btn = button("Einstellungen", "navButton", lambda: SettingsDialog(self).exec())
-        sl.addWidget(settings_btn)
-        rl.addWidget(side)
-
-        self.stack = QStackedWidget()
-        self.home = HomePage(self)
-        self.editor = EditorPage(self)
-        self.modules = ModulesPage(self)
-        for p in (self.home, self.editor, self.modules):
-            self.stack.addWidget(p)
-        rl.addWidget(self.stack, 1)
+        self.workspace = Workspace(self)
+        self.machines = MachinesPanel(self)
+        self.machines.selected.connect(self.open_machine)
+        rl.addWidget(self.machines)
+        rl.addWidget(self.workspace, 1)
         self.setCentralWidget(root)
+        self._open_initial()
 
-        self.nav_manuals.clicked.connect(self.show_home)
-        self.nav_modules.clicked.connect(self.show_modules)
-        self.home.open_machine.connect(self.open_machine)
-        self.editor.back.connect(self.show_home)
-        self.show_home()
+    def _open_initial(self) -> None:
+        last = self.settings.value("last_machine", "")
+        paths = self.lib.machines()
+        target = Path(last) if last and Path(last) in paths else (paths[0] if paths else None)
+        self.open_machine(Machine.load(target) if target else None)
 
-    def _nav_button(self, text: str, lay) -> QPushButton:
-        b = button(text, "navButton")
-        b.setCheckable(True)
-        self.nav.addButton(b)
-        lay.addWidget(b)
-        return b
+    def open_machine(self, machine: Machine | None) -> None:
+        self.lib.reload_modules()
+        self.workspace.load(machine)
+        self.machines.refresh(machine.path if machine else None)
 
     def set_library(self, lib: Library) -> None:
+        self.workspace.load(None)
         self.lib = lib
-        self.show_home()
-
-    def show_home(self) -> None:
-        self.nav_manuals.setChecked(True)
-        self.home.refresh()
-        self.stack.setCurrentWidget(self.home)
-
-    def show_modules(self) -> None:
-        if self.stack.currentWidget() is self.editor:
-            self.editor._save()
-        self.nav_modules.setChecked(True)
-        self.modules.refresh()
-        self.stack.setCurrentWidget(self.modules)
-
-    def open_machine(self, machine: Machine) -> None:
-        self.lib.reload_modules()
-        self.nav_manuals.setChecked(True)
-        self.editor.load(machine)
-        self.stack.setCurrentWidget(self.editor)
+        self._open_initial()
 
     def closeEvent(self, e):
-        if self.editor.thread is not None:
+        if self.workspace.thread is not None:
             QMessageBox.information(self, "Bitte warten", "Die Anleitung wird gerade erstellt.")
             e.ignore()
             return
-        self.editor.save_timer.stop()
-        if self.stack.currentWidget() is self.editor:
-            self.editor._save()
+        self.workspace.save_timer.stop()
+        self.workspace.save()
         e.accept()
